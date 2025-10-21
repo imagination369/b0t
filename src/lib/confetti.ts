@@ -19,6 +19,7 @@ export function fireConfetti() {
 
 /**
  * Fire success confetti (cat-themed! 🐱)
+ * Shoots from the cat mascot in the bottom-right corner
  */
 export function fireSuccessConfetti() {
   window.dispatchEvent(new CustomEvent('cat:success'));
@@ -27,8 +28,8 @@ export function fireSuccessConfetti() {
 
   confetti({
     particleCount: 80,
-    spread: 60,
-    origin: { y: 0.6 },
+    spread: 70,
+    origin: { x: 0.85, y: 0.85 },
     colors: ['#10b981', '#34d399', '#6ee7b7'],
     shapes: ['circle'],
     scalar: 1.2,
@@ -37,8 +38,8 @@ export function fireSuccessConfetti() {
   // Add cat emoji confetti
   confetti({
     particleCount: 15,
-    spread: 50,
-    origin: { y: 0.6 },
+    spread: 60,
+    origin: { x: 0.85, y: 0.85 },
     scalar: 2,
     shapes: catFaces.map(() => confetti.shapeFromText({ text: catFaces[Math.floor(Math.random() * catFaces.length)], scalar: 2 })),
   });
@@ -46,6 +47,7 @@ export function fireSuccessConfetti() {
 
 /**
  * Fire platform-specific colored confetti (with cats!)
+ * Shoots from the cat mascot in the bottom-right corner
  */
 export function firePlatformConfetti(platform: 'twitter' | 'youtube' | 'instagram') {
   const colorMap = {
@@ -59,7 +61,7 @@ export function firePlatformConfetti(platform: 'twitter' | 'youtube' | 'instagra
   confetti({
     particleCount: 100,
     spread: 70,
-    origin: { y: 0.6 },
+    origin: { x: 0.85, y: 0.85 },
     colors: colorMap[platform],
   });
 
@@ -67,7 +69,7 @@ export function firePlatformConfetti(platform: 'twitter' | 'youtube' | 'instagra
   confetti({
     particleCount: 12,
     spread: 60,
-    origin: { y: 0.6 },
+    origin: { x: 0.85, y: 0.85 },
     scalar: 2,
     shapes: catFaces.map(() => confetti.shapeFromText({ text: catFaces[Math.floor(Math.random() * catFaces.length)], scalar: 2 })),
   });
@@ -75,13 +77,14 @@ export function firePlatformConfetti(platform: 'twitter' | 'youtube' | 'instagra
 
 /**
  * Fire milestone confetti (big celebration with CATS! 🎉🐱)
+ * Epic celebration from the cat mascot in the bottom-right
  */
 export function fireMilestoneConfetti() {
   window.dispatchEvent(new CustomEvent('cat:success'));
 
   const duration = 2000;
   const animationEnd = Date.now() + duration;
-  const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
+  const defaults = { startVelocity: 35, spread: 90, ticks: 80, zIndex: 0 };
   const catFaces = ['🐱', '😺', '😸', '😻', '🐾', '😼', '😽'];
 
   function randomInRange(min: number, max: number) {
@@ -97,25 +100,28 @@ export function fireMilestoneConfetti() {
 
     const particleCount = 50 * (timeLeft / duration);
 
-    // Regular confetti
+    // Main burst from cat (bottom-right)
     confetti({
       ...defaults,
-      particleCount,
-      origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
-    });
-    confetti({
-      ...defaults,
-      particleCount,
-      origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
+      particleCount: particleCount * 1.5,
+      origin: { x: 0.85, y: 0.85 }
     });
 
-    // Cat emoji confetti
+    // Secondary burst with slight variation
     confetti({
       ...defaults,
-      particleCount: 8,
+      particleCount,
+      origin: { x: randomInRange(0.75, 0.95), y: randomInRange(0.75, 0.95) }
+    });
+
+    // Cat emoji confetti from the cat
+    confetti({
+      ...defaults,
+      particleCount: 10,
       scalar: 2.5,
+      spread: 100,
       shapes: catFaces.map(() => confetti.shapeFromText({ text: catFaces[Math.floor(Math.random() * catFaces.length)], scalar: 2 })),
-      origin: { x: randomInRange(0.4, 0.6), y: Math.random() - 0.2 }
+      origin: { x: 0.85, y: 0.85 }
     });
   }, 250);
 }
