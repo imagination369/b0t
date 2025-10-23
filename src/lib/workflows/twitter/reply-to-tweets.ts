@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { db, useSQLite } from '@/lib/db';
 import { tweetRepliesTableSQLite, tweetRepliesTablePostgres } from '@/lib/schema';
 import { trackPost, trackRead } from '@/lib/usage-tracker';
+import { inArray } from 'drizzle-orm';
 
 /**
  * Reply to Tweets Workflow
@@ -15,12 +16,15 @@ import { trackPost, trackRead } from '@/lib/usage-tracker';
  * - Circuit breakers to prevent hammering failing APIs
  * - Rate limiting (Twitter: 50 actions/hour, OpenAI: 500 req/min)
  * - Structured logging to logs/app.log
+ * - Duplicate prevention (filters out already-replied tweets)
  *
  * Steps:
  * 1. Search for tweets matching criteria (from today, no links/media)
- * 2. Rank by engagement and select hottest + newest
- * 3. Generate AI response
- * 4. Post reply to selected tweet
+ * 2. Filter out tweets we've already replied to
+ * 3. Rank by engagement and select hottest + newest
+ * 4. Generate AI response
+ * 5. Post reply to selected tweet
+ * 6. Save to database
  */
 
 interface WorkflowContext {
@@ -126,6 +130,50 @@ export async function replyToTweetsWorkflow(config: WorkflowConfig) {
 
       logger.info({ count: results.results.length }, '✅ Found tweets');
       return { ...ctx, tweets: results.results };
+    })
+    .step('filter-already-replied', async (ctx) => {
+      logger.info({ totalTweets: ctx.tweets.length }, '🔍 Checking for already-replied tweets');
+
+      if (!ctx.tweets || ctx.tweets.length === 0) {
+        logger.info('No tweets to filter');
+        return ctx;
+      }
+
+      // Get all tweet IDs from search results
+      const tweetIds = ctx.tweets.map(t => t.tweet_id);
+
+      // Query database for tweets we've already replied to
+      const repliedTweetIds: string[] = [];
+
+      if (useSQLite) {
+        const repliedTweets = await (db as ReturnType<typeof import('drizzle-orm/better-sqlite3').drizzle>)
+          .select({ originalTweetId: tweetRepliesTableSQLite.originalTweetId })
+          .from(tweetRepliesTableSQLite)
+          .where(inArray(tweetRepliesTableSQLite.originalTweetId, tweetIds));
+
+        repliedTweetIds.push(...repliedTweets.map(r => r.originalTweetId));
+      } else {
+        const repliedTweets = await (db as ReturnType<typeof import('drizzle-orm/node-postgres').drizzle>)
+          .select({ originalTweetId: tweetRepliesTablePostgres.originalTweetId })
+          .from(tweetRepliesTablePostgres)
+          .where(inArray(tweetRepliesTablePostgres.originalTweetId, tweetIds));
+
+        repliedTweetIds.push(...repliedTweets.map(r => r.originalTweetId));
+      }
+
+      // Filter out tweets we've already replied to
+      const filteredTweets = ctx.tweets.filter(tweet => !repliedTweetIds.includes(tweet.tweet_id));
+
+      logger.info(
+        {
+          totalTweets: ctx.tweets.length,
+          alreadyReplied: repliedTweetIds.length,
+          remainingTweets: filteredTweets.length,
+        },
+        `✅ Filtered out ${repliedTweetIds.length} already-replied tweets`
+      );
+
+      return { ...ctx, tweets: filteredTweets };
     })
     .step('select-hottest', async (ctx) => {
       logger.info('🎯 Selecting best tweet to reply to');

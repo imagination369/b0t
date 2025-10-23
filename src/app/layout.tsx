@@ -1,22 +1,27 @@
 import type { Metadata } from "next";
-import { Roboto_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "@/components/providers/SessionProvider";
 import { Toaster } from "@/components/ui/sonner";
 import NextTopLoader from "nextjs-toploader";
 import { AppLoader } from "@/components/ui/app-loader";
-import { CatMascot } from "@/components/ui/cat-mascot";
+import { ChatbotWidget } from "@/components/ui/chatbot-widget";
 
-const robotoHeading = Roboto_Mono({
-  weight: "500",
+const interHeading = Inter({
+  weight: ["500", "600", "700"],
   variable: "--font-heading",
   subsets: ["latin"],
 });
 
-const robotoBody = Roboto_Mono({
-  weight: "400",
+const interBody = Inter({
+  weight: ["400", "500"],
   variable: "--font-body",
   subsets: ["latin"],
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
 });
 
 export const metadata: Metadata = {
@@ -35,7 +40,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${robotoHeading.variable} ${robotoBody.variable} antialiased`}
+        className={`${interHeading.variable} ${interBody.variable} ${inter.variable} antialiased`}
       >
         <AppLoader />
         <NextTopLoader
@@ -48,7 +53,7 @@ export default function RootLayout({
         />
         <SessionProvider>{children}</SessionProvider>
         <Toaster />
-        <CatMascot />
+        <ChatbotWidget />
       </body>
     </html>
   );
