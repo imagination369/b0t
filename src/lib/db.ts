@@ -18,6 +18,14 @@ if (useSQLite) {
   // SQLite configuration for local development
   console.log('🗄️  Using SQLite database for local development');
   const sqlite = new Database('local.db');
+
+  // Enable WAL mode for better concurrency during builds
+  // Prevents database locking when multiple processes (dev server, build, typechecking) access the DB
+  sqlite.pragma('journal_mode = WAL');
+
+  // Set busy timeout to 5 seconds to handle concurrent access
+  sqlite.pragma('busy_timeout = 5000');
+
   sqliteDb = drizzleSQLite(sqlite);
   db = sqliteDb;
 } else {

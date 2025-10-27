@@ -12,8 +12,8 @@ This command runs all linting and typechecking tools for this project, collects 
 Run the following commands for this Next.js/TypeScript project:
 
 ```bash
-npm run build  # Next.js build with Turbopack (includes type checking)
-npm run lint   # ESLint with Next.js config
+npm run typecheck  # TypeScript type checking (safe to run alongside dev server)
+npm run lint       # ESLint with Next.js config
 ```
 
 ## Step 2: Collect and Parse Errors
@@ -37,7 +37,7 @@ For each domain that has issues, spawn an agent in parallel using the Task tool:
 Each agent should:
 1. Receive the list of files and specific errors in their domain
 2. Fix all errors in their domain systematically
-3. Run the relevant check command to verify fixes (`npm run build` for types, `npm run lint` for lint errors)
+3. Run the relevant check command to verify fixes (`npm run typecheck` for types, `npm run lint` for lint errors)
 4. Report completion with a summary of what was fixed
 
 ## Step 4: Verify All Fixes
@@ -45,7 +45,7 @@ Each agent should:
 After all agents complete, run the full check again to ensure all issues are resolved:
 
 ```bash
-npm run build
+npm run typecheck
 npm run lint
 ```
 
