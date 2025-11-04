@@ -9,6 +9,7 @@ import { WorkflowListItem } from '@/types/workflows';
 import { WorkflowExecutionDialog } from './workflow-execution-dialog';
 import { CredentialsConfigDialog } from './credentials-config-dialog';
 import { WorkflowSettingsDialog } from './workflow-settings-dialog';
+import { toast } from 'sonner';
 
 interface WorkflowCardProps {
   workflow: WorkflowListItem;
@@ -26,10 +27,20 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onRun, onViewHisto
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${workflow.name}"? This cannot be undone.`)) {
-      return;
-    }
+    toast(`Delete "${workflow.name}"?`, {
+      description: 'This cannot be undone.',
+      action: {
+        label: 'Delete',
+        onClick: () => performDelete(),
+      },
+      cancel: {
+        label: 'Cancel',
+        onClick: () => {},
+      },
+    });
+  };
 
+  const performDelete = async () => {
     setDeleting(true);
     try {
       const response = await fetch(`/api/workflows/${workflow.id}`, {
@@ -40,10 +51,15 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onRun, onViewHisto
         throw new Error('Failed to delete workflow');
       }
 
+      toast.success('Workflow deleted', {
+        description: `"${workflow.name}" has been removed.`,
+      });
       onDeleted();
     } catch (error) {
       console.error('Failed to delete workflow:', error);
-      alert('Failed to delete workflow');
+      toast.error('Failed to delete workflow', {
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+      });
     } finally {
       setDeleting(false);
     }

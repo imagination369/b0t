@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Trash2, Key } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface CredentialCardProps {
   credential: {
@@ -21,10 +22,20 @@ export function CredentialCard({ credential, onDeleted }: CredentialCardProps) {
   const [deleting, setDeleting] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${credential.name}"? This cannot be undone.`)) {
-      return;
-    }
+    toast(`Delete "${credential.name}"?`, {
+      description: 'This cannot be undone.',
+      action: {
+        label: 'Delete',
+        onClick: () => performDelete(),
+      },
+      cancel: {
+        label: 'Cancel',
+        onClick: () => {},
+      },
+    });
+  };
 
+  const performDelete = async () => {
     setDeleting(true);
     try {
       const response = await fetch(`/api/credentials/${credential.id}`, {
@@ -35,10 +46,15 @@ export function CredentialCard({ credential, onDeleted }: CredentialCardProps) {
         throw new Error('Failed to delete credential');
       }
 
+      toast.success('Credential deleted', {
+        description: `"${credential.name}" has been removed.`,
+      });
       onDeleted();
     } catch (error) {
       console.error('Failed to delete credential:', error);
-      alert('Failed to delete credential');
+      toast.error('Failed to delete credential', {
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+      });
     } finally {
       setDeleting(false);
     }

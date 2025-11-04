@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { WorkflowListItem } from '@/types/workflows';
+import { toast } from 'sonner';
 
 export default function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<WorkflowListItem[]>([]);
@@ -126,9 +127,14 @@ export default function WorkflowsPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      toast.success('Workflow exported', {
+        description: 'Workflow has been downloaded successfully.',
+      });
     } catch (error) {
       console.error('Failed to export workflow:', error);
-      alert('Failed to export workflow');
+      toast.error('Failed to export workflow', {
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+      });
     }
   };
 
@@ -172,13 +178,14 @@ export default function WorkflowsPage() {
 
       // Show success message with required credentials if any
       if (result.requiredCredentials && result.requiredCredentials.length > 0) {
-        alert(
-          `Workflow "${result.name}" imported successfully!\n\n` +
-          `Required credentials: ${result.requiredCredentials.join(', ')}\n` +
-          `Please add these credentials in the Credentials page.`
-        );
+        toast.success(`Workflow imported successfully!`, {
+          description: `"${result.name}" was imported. Required credentials: ${result.requiredCredentials.join(', ')}. Please add these in the Credentials page.`,
+          duration: 8000,
+        });
       } else {
-        alert(`Workflow "${result.name}" imported successfully!`);
+        toast.success('Workflow imported successfully!', {
+          description: `"${result.name}" has been added to your workflows.`,
+        });
       }
 
       setShowImportDialog(false);

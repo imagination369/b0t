@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Twitter, Youtube, Instagram, Check, X, Loader2, Cpu } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
+import { toast } from 'sonner';
 
 interface TwitterStatus {
   connected: boolean;
@@ -270,7 +271,9 @@ export default function SettingsPage() {
 
     if (platform === 'instagram') {
       // Instagram coming soon
-      alert('Instagram integration coming soon. Requires Meta Business account.');
+      toast.info('Coming Soon', {
+        description: 'Instagram integration is in development. Requires Meta Business account.',
+      });
     }
   };
 
