@@ -5,13 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Download, Trash2, Workflow as WorkflowIcon, Play, Key, MessageSquare, Webhook, Clock, Send, Sliders, BarChart3, Table2, Image, FileText, List, Braces } from 'lucide-react';
+import { Download, Trash2, Workflow as WorkflowIcon, Play, Key, MessageSquare, Sliders, BarChart3 } from 'lucide-react';
 import { WorkflowListItem } from '@/types/workflows';
 import { WorkflowExecutionDialog } from './workflow-execution-dialog';
 import { CredentialsConfigDialog } from './credentials-config-dialog';
 import { WorkflowSettingsDialog } from './workflow-settings-dialog';
 import { WorkflowOutputsDialog } from './workflow-outputs-dialog';
-import { detectOutputDisplay, getOutputTypeLabel, getOutputTypeIcon } from '@/lib/workflows/analyze-output-display';
 import { toast } from 'sonner';
 
 interface WorkflowCardProps {
@@ -93,11 +92,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
   };
 
   const handleRunClick = () => {
-    if (workflow.trigger.type === 'chat') {
-      window.location.href = `/workflows/${workflow.id}/chat`;
-    } else {
-      setExecutionDialogOpen(true);
-    }
+    setExecutionDialogOpen(true);
   };
 
   const getStatusColor = (status: string) => {
@@ -115,52 +110,6 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
     }
   };
 
-  const getRunStatusColor = (status: string) => {
-    switch (status) {
-      case 'success':
-        return 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300';
-      case 'error':
-        return 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300';
-      case 'running':
-        return 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300';
-      default:
-        return 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300';
-    }
-  };
-
-  const getTriggerIcon = (triggerType: string) => {
-    switch (triggerType) {
-      case 'cron':
-        return Clock;
-      case 'webhook':
-        return Webhook;
-      case 'telegram':
-      case 'discord':
-        return Send;
-      case 'chat':
-        return MessageSquare;
-      default:
-        return Play;
-    }
-  };
-
-  const getTriggerLabel = (triggerType: string) => {
-    switch (triggerType) {
-      case 'cron':
-        return 'Scheduled';
-      case 'webhook':
-        return 'Webhook';
-      case 'telegram':
-        return 'Telegram';
-      case 'discord':
-        return 'Discord';
-      case 'chat':
-        return 'Chat';
-      default:
-        return 'Manual';
-    }
-  };
-
   const formatDate = (date: Date | string | null) => {
     if (!date) return 'Never';
     const d = typeof date === 'string' ? new Date(date) : date;
@@ -172,28 +121,6 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
       minute: '2-digit',
     });
   };
-
-  const TriggerIcon = getTriggerIcon(workflow.trigger.type);
-
-  // Get the last step's module path for output display detection
-  const config = workflow.config as { steps?: Array<{ module?: string }> };
-  const lastStep = config.steps?.[config.steps.length - 1];
-  const lastStepModule = lastStep?.module || '';
-
-  const outputDisplay = detectOutputDisplay(lastStepModule, workflow.lastRunOutput);
-  const outputTypeLabel = getOutputTypeLabel(outputDisplay.type);
-  const outputIconName = getOutputTypeIcon(outputDisplay.type);
-
-  // Map icon name to component
-  const iconMap: Record<string, typeof Table2> = {
-    'Table2': Table2,
-    'Image': Image,
-    'FileText': FileText,
-    'BarChart3': BarChart3,
-    'List': List,
-    'Braces': Braces,
-  };
-  const OutputIcon = iconMap[outputIconName] || Braces;
 
   const runButtonConfig = (() => {
     switch (workflow.trigger.type) {
@@ -211,22 +138,23 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
   const RunIcon = runButtonConfig.icon;
 
   return (
-    <Card className="group hover:shadow-md transition-all duration-200 hover:scale-[1.02] relative overflow-hidden border-l-4 border-l-transparent hover:border-l-primary">
+    <Card className="group relative overflow-hidden rounded-lg border border-border/50 bg-surface/80 backdrop-blur-sm shadow-sm hover:shadow-lg hover:border-primary/30 transition-all duration-300 hover:scale-[1.02]">
       <CardHeader className="space-y-2">
-        <div className="flex items-center justify-between">
-          <Badge variant="outline" className="gap-1 bg-muted/50">
-            <TriggerIcon className="h-3 w-3" />
-            {getTriggerLabel(workflow.trigger.type)}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={(optimisticStatus || workflow.status) === 'active'}
+              onCheckedChange={handleToggleStatus}
+              disabled={toggling}
+              className="data-[state=checked]:!bg-green-500 dark:data-[state=checked]:!bg-green-600 data-[state=unchecked]:!bg-gray-300 dark:data-[state=unchecked]:!bg-gray-600"
+            />
+            <span className={`text-xs font-medium ${(optimisticStatus || workflow.status) === 'active' ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+              {(optimisticStatus || workflow.status) === 'active' ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+          <Badge className={getStatusColor(optimisticStatus || workflow.status)}>
+            {optimisticStatus || workflow.status}
           </Badge>
-          <Switch
-            checked={(optimisticStatus || workflow.status) === 'active'}
-            onCheckedChange={handleToggleStatus}
-            disabled={toggling}
-            aria-label="Toggle workflow status"
-          />
-          <span className={`text-xs font-medium ${(optimisticStatus || workflow.status) === 'active' ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-            {(optimisticStatus || workflow.status) === 'active' ? 'Active' : 'Inactive'}
-          </span>
         </div>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -262,23 +190,6 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
         )}
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="secondary" className={getStatusColor(workflow.status)}>
-            {workflow.status}
-          </Badge>
-          {workflow.lastRunStatus && (
-            <Badge variant="secondary" className={getRunStatusColor(workflow.lastRunStatus)}>
-              {workflow.lastRunStatus}
-            </Badge>
-          )}
-          {outputTypeLabel && (
-            <Badge variant="outline" className="gap-1">
-              <OutputIcon className="h-3 w-3" />
-              {outputTypeLabel}
-            </Badge>
-          )}
-        </div>
-
         <div className="space-y-1 text-xs text-muted-foreground">
           <div className="flex justify-between">
             <span>Created:</span>
