@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { postgresDb } from '@/lib/db';
 import { workflowsTablePostgres } from '@/lib/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
       whereConditions.push(eq(workflowsTablePostgres.organizationId, organizationId));
     } else {
       // Show only admin's personal workflows (not tied to any organization)
-      whereConditions.push(eq(workflowsTablePostgres.organizationId, null));
+      whereConditions.push(isNull(workflowsTablePostgres.organizationId));
     }
 
     const workflows = await postgresDb

@@ -170,7 +170,7 @@ export async function DELETE(
       );
     }
 
-    await deleteOrganization(id);
+    await deleteOrganization(id, session.user.id);
 
     return NextResponse.json({
       success: true,

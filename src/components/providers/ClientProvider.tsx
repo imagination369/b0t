@@ -4,14 +4,14 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from '
 import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 
-interface Client {
+export interface Client {
   id: string;
   name: string;
   slug: string;
   role: 'owner' | 'admin' | 'member' | 'viewer';
-  plan?: string;
-  status?: 'active' | 'inactive';
-  createdAt?: string;
+  plan: string;
+  status: 'active' | 'inactive';
+  createdAt: string;
   memberCount?: number;
 }
 

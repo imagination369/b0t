@@ -1,7 +1,7 @@
 import { postgresDb } from '@/lib/db';
 import { userCredentialsTablePostgres } from '@/lib/schema';
 import { encrypt, decrypt } from '@/lib/encryption';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { logger } from '@/lib/logger';
 
@@ -123,7 +123,7 @@ export async function listCredentials(
     whereConditions.push(eq(userCredentialsTablePostgres.organizationId, organizationId));
   } else {
     // Show only admin's personal credentials (not tied to any organization)
-    whereConditions.push(eq(userCredentialsTablePostgres.organizationId, null));
+    whereConditions.push(isNull(userCredentialsTablePostgres.organizationId));
   }
 
   const credentials = await postgresDb

@@ -15,23 +15,12 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Building2, Plus, Users, Calendar, Shield, Trash2, Pencil, UserPlus } from 'lucide-react';
-import { useClient } from '@/components/providers/ClientProvider';
+import { useClient, type Client } from '@/components/providers/ClientProvider';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { ClientMembersDialog } from '@/components/clients/client-members-dialog';
-
-interface Client {
-  id: string;
-  name: string;
-  slug: string;
-  role: 'owner' | 'admin' | 'member' | 'viewer';
-  plan: string;
-  createdAt: string;
-  memberCount?: number;
-  status?: 'active' | 'inactive';
-}
 
 const getRoleBadgeColor = (role: string) => {
   switch (role) {
