@@ -266,13 +266,23 @@ export default function WorkflowsPage() {
             </Select>
           </div>
 
-          <Button
-            onClick={handleImportClick}
-            className="bg-foreground text-background hover:bg-foreground/90 transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 group"
-          >
-            <Upload className="h-4 w-4 mr-2 transition-transform duration-200 group-hover:-translate-y-0.5" />
-            Import
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => window.location.href = '/dashboard/workflows/new'}
+              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 group"
+            >
+              <Workflow className="h-4 w-4 mr-2 transition-transform duration-200 group-hover:rotate-12" />
+              New Workflow
+            </Button>
+            <Button
+              onClick={handleImportClick}
+              variant="outline"
+              className="transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 group"
+            >
+              <Upload className="h-4 w-4 mr-2 transition-transform duration-200 group-hover:-translate-y-0.5" />
+              Import
+            </Button>
+          </div>
         </div>
 
         <WorkflowsList
