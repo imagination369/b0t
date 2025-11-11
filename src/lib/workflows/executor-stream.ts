@@ -6,7 +6,7 @@ import {
   accountsTable,
   userCredentialsTable
 } from '@/lib/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { executeStep, normalizeStep, type WorkflowStep } from './control-flow';
@@ -192,7 +192,7 @@ export async function executeWorkflowWithProgress(
             lastRun: completedAt,
             lastRunStatus: 'error',
             lastRunError: error instanceof Error ? error.message : 'Unknown error',
-            runCount: workflow.runCount + 1,
+            runCount: sql`${workflowsTable.runCount} + 1`,
           })
           .where(eq(workflowsTable.id, workflowId));
 
@@ -261,7 +261,7 @@ export async function executeWorkflowWithProgress(
         lastRun: completedAt,
         lastRunStatus: 'success',
         lastRunError: null,
-        runCount: workflow.runCount + 1,
+        runCount: sql`${workflowsTable.runCount} + 1`,
       })
       .where(eq(workflowsTable.id, workflowId));
 

@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { logger } from '@/lib/logger';
 import { queueWorkflowExecution, isWorkflowQueueAvailable } from '@/lib/workflows/workflow-queue';
 import { executeWorkflow } from '@/lib/workflows/executor';
+import { checkStrictRateLimit } from '@/lib/ratelimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,10 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
+  // Apply rate limiting (3 requests per minute)
+  const rateLimitResult = await checkStrictRateLimit(request);
+  if (rateLimitResult) return rateLimitResult;
+
   const session = await auth();
 
   if (!session?.user?.id) {

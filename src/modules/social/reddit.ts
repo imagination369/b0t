@@ -18,6 +18,15 @@ import { logger } from '@/lib/logger';
  * - Content distribution
  * - Social listening
  * - Marketing automation
+ *
+ * SECURITY NOTE:
+ * This module uses snoowrap@1.23.0, which has a known SSRF vulnerability (unmaintained since 2022).
+ * The Reddit module is OPTIONAL and only initializes if credentials are provided.
+ * Risk mitigation:
+ * - Only use with trusted Reddit credentials
+ * - Do not expose Reddit functionality to untrusted users
+ * - Consider migrating to direct Reddit API calls or maintained alternative
+ * TODO: Replace with maintained alternative or direct API implementation
  */
 
 const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID;

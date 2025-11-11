@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { LogIn, LogOut, Loader2, ChevronDown, Building2 } from 'lucide-react';
+import { SystemStatusBadge } from '@/components/SystemStatusBadge';
 
 export function Header() {
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -67,6 +68,12 @@ export function Header() {
               t
             </span>
           </div>
+
+          {/* System Status Badge - Only show in development or for admins */}
+          {(process.env.NODE_ENV === 'development' || !currentClient) && session?.user && (
+            <SystemStatusBadge />
+          )}
+
           {/* Timezone Clock */}
           {currentTime && (
             <div className="hidden md:flex items-center gap-1.5 text-xs text-gray-700 ml-3 pl-3 border-l border-gray-alpha-400">

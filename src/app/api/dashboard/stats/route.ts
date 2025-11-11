@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
-import { workflowsTable, workflowRunsTable } from '@/lib/schema';
+import { workflowsTable, workflowRunsTable, organizationMembersTable } from '@/lib/schema';
 import { eq, count, and, isNull } from 'drizzle-orm';
 
 export async function GET(request: NextRequest) {
@@ -20,6 +20,28 @@ export async function GET(request: NextRequest) {
     // Parse query parameters
     const { searchParams } = new URL(request.url);
     const organizationId = searchParams.get('organizationId');
+
+    // If organizationId is provided, verify user has access to it
+    if (organizationId) {
+      const membership = await db
+        .select()
+        .from(organizationMembersTable)
+        .where(
+          and(
+            eq(organizationMembersTable.organizationId, organizationId),
+            eq(organizationMembersTable.userId, userId)
+          )
+        )
+        .limit(1);
+
+      if (membership.length === 0) {
+        logger.warn(
+          { userId, organizationId },
+          'Unauthorized access attempt to organization stats'
+        );
+        return NextResponse.json({ error: 'Unauthorized access to organization' }, { status: 403 });
+      }
+    }
 
     // Build where conditions
     const runsWhereSuccess = organizationId

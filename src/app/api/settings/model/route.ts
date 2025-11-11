@@ -43,13 +43,26 @@ export async function GET() {
   }
 }
 
-// POST /api/settings/model - Save model setting
+// POST /api/settings/model - Save model setting (admin only)
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
 
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Only admin can change global model setting
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@socialcat.com';
+    if (session.user.email !== adminEmail) {
+      logger.warn(
+        { userId: session.user.id, userEmail: session.user.email },
+        'Unauthorized attempt to change model setting'
+      );
+      return NextResponse.json(
+        { error: 'Forbidden: Admin access required' },
+        { status: 403 }
+      );
     }
 
     const body = await request.json();

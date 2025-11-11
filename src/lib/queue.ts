@@ -27,8 +27,15 @@ const redisConfig = {
   ...(process.env.REDIS_PASSWORD && { password: process.env.REDIS_PASSWORD }),
 };
 
+/**
+ * Redis connection singletons to prevent memory leaks
+ * Each type of connection (queue vs worker) gets its own instance
+ */
+let queueRedisConnection: Redis | null = null;
+let workerRedisConnection: Redis | null = null;
+
 // Alternative: Use REDIS_URL if provided (e.g., from Railway, Upstash)
-const getRedisConnection = () => {
+const createRedisConnection = (): Redis => {
   if (process.env.REDIS_URL) {
     const redis = new Redis(process.env.REDIS_URL, {
       maxRetriesPerRequest: null,
@@ -61,9 +68,27 @@ const getRedisConnection = () => {
   throw new Error('Redis not configured. Set REDIS_URL or REDIS_HOST/REDIS_PORT environment variables.');
 };
 
-// Default queue options with retry logic (without connection - added lazily)
+// Get or create Redis connection for queues (singleton pattern)
+const getQueueRedisConnection = (): Redis => {
+  if (!queueRedisConnection) {
+    queueRedisConnection = createRedisConnection();
+    logger.info('Created queue Redis connection');
+  }
+  return queueRedisConnection;
+};
+
+// Get or create Redis connection for workers (singleton pattern)
+const getWorkerRedisConnection = (): Redis => {
+  if (!workerRedisConnection) {
+    workerRedisConnection = createRedisConnection();
+    logger.info('Created worker Redis connection');
+  }
+  return workerRedisConnection;
+};
+
+// Default queue options with retry logic (uses singleton connection)
 const getDefaultQueueOptions = (): QueueOptions => ({
-  connection: getRedisConnection(),
+  connection: getQueueRedisConnection(),
   defaultJobOptions: {
     attempts: 3,               // Retry failed jobs 3 times
     backoff: {
@@ -156,7 +181,7 @@ export function createWorker<T = unknown, R = unknown>(
       }
     },
     {
-      connection: getRedisConnection(),
+      connection: getWorkerRedisConnection(),
       ...defaultWorkerOptions,
       ...options,
     }
@@ -233,6 +258,7 @@ export async function startAllWorkers() {
 
 /**
  * Stop all queues and workers gracefully
+ * Also closes Redis connections to prevent memory leaks
  */
 export async function shutdownQueues() {
   logger.info('Shutting down queues and workers');
@@ -252,7 +278,20 @@ export async function shutdownQueues() {
   workers.clear();
   queues.clear();
 
-  logger.info('All queues and workers shut down');
+  // Close Redis connections
+  if (queueRedisConnection) {
+    await queueRedisConnection.quit();
+    queueRedisConnection = null;
+    logger.info('Queue Redis connection closed');
+  }
+
+  if (workerRedisConnection) {
+    await workerRedisConnection.quit();
+    workerRedisConnection = null;
+    logger.info('Worker Redis connection closed');
+  }
+
+  logger.info('All queues, workers, and connections shut down');
 }
 
 /**

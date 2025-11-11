@@ -4,7 +4,7 @@ import {
   workflowRunsTable,
   organizationsTable
 } from '@/lib/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { executeStep, normalizeStep, type WorkflowStep } from './control-flow';
@@ -175,14 +175,14 @@ export async function executeWorkflow(
         })
         .where(eq(workflowRunsTable.id, runId));
 
-      // Update workflow last run status
+      // Update workflow last run status (use SQL increment to avoid race condition)
       await db
         .update(workflowsTable)
         .set({
           lastRun: completedAt,
           lastRunStatus: 'error',
           lastRunError: error instanceof Error ? error.message : 'Unknown error',
-          runCount: workflow.runCount + 1,
+          runCount: sql`${workflowsTable.runCount} + 1`,
         })
         .where(eq(workflowsTable.id, workflowId));
 
@@ -240,14 +240,14 @@ export async function executeWorkflow(
       })
       .where(eq(workflowRunsTable.id, runId));
 
-    // Update workflow last run status
+    // Update workflow last run status (use SQL increment to avoid race condition)
     await db
       .update(workflowsTable)
       .set({
         lastRun: completedAt,
         lastRunStatus: 'success',
         lastRunError: null,
-        runCount: workflow.runCount + 1,
+        runCount: sql`${workflowsTable.runCount} + 1`,
       })
       .where(eq(workflowsTable.id, workflowId));
 
@@ -657,10 +657,32 @@ async function executeModuleFunction(
 }
 
 /**
+ * In-memory credential cache
+ * Stores decrypted credentials to avoid repeated database queries and decryption
+ */
+const globalForCredentials = globalThis as typeof globalThis & {
+  _credentialCache?: Map<string, { credentials: Record<string, string>; timestamp: number }>;
+};
+
+if (!globalForCredentials._credentialCache) {
+  globalForCredentials._credentialCache = new Map();
+}
+
+const CREDENTIAL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
  * Load all credentials for a user from both OAuth accounts and API keys
  * Returns an object like: { twitter: "token...", youtube: "token...", openai: "sk-...", ... }
+ * Exported for credential pre-loading cache
  */
-async function loadUserCredentials(userId: string): Promise<Record<string, string>> {
+export async function loadUserCredentials(userId: string): Promise<Record<string, string>> {
+  // Check cache first
+  const cached = globalForCredentials._credentialCache!.get(userId);
+  if (cached && Date.now() - cached.timestamp < CREDENTIAL_CACHE_TTL) {
+    logger.info({ userId, cacheAge: Math.round((Date.now() - cached.timestamp) / 1000) }, '⚡ Using cached credentials');
+    return cached.credentials;
+  }
+
   try {
     const credentialMap: Record<string, string> = {};
 
@@ -766,6 +788,12 @@ async function loadUserCredentials(userId: string): Promise<Record<string, strin
       },
       'User credentials loaded (OAuth + API keys + aliases)'
     );
+
+    // Store in cache
+    globalForCredentials._credentialCache!.set(userId, {
+      credentials: credentialMap,
+      timestamp: Date.now(),
+    });
 
     return credentialMap;
   } catch (error) {

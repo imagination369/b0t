@@ -1,6 +1,7 @@
 import { scheduler, ScheduledJob } from '../scheduler';
 import { exampleEvery5Minutes, exampleHourly, exampleDaily } from './example';
 import { cleanupOAuthState } from './cleanup-oauth-state';
+import { refreshExpiringTokens } from './refresh-expiring-tokens';
 import { logger } from '../logger';
 import { db } from '../db';
 import { appSettingsTable } from '../schema';
@@ -45,6 +46,12 @@ const jobs: ScheduledJob[] = [
     name: 'cleanup-oauth-state',
     schedule: '*/15 * * * *', // Every 15 minutes
     task: cleanupOAuthState,
+    enabled: true,
+  },
+  {
+    name: 'refresh-expiring-tokens',
+    schedule: '*/15 * * * *', // Every 15 minutes
+    task: refreshExpiringTokens,
     enabled: true,
   },
 

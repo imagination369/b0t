@@ -29,6 +29,27 @@
       "when": 1762384034957,
       "tag": "0003_handy_glorian",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1762425376000,
+      "tag": "0004_make_workflow_org_id_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1731356912000,
+      "tag": "0005_add_tweet_replies_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1731357000000,
+      "tag": "0006_add_foreign_key_constraints",
+      "breakpoints": true
     }
   ]
 }

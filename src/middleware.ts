@@ -39,6 +39,7 @@ export default auth((req) => {
     '/auth/signin',
     '/auth/error',
     '/api/auth',
+    '/api/system/status',          // System status endpoint (public operational info)
     '/api/workflows/import-test',  // Test endpoint for development
     '/api/workflows/execute-test', // Test endpoint for development
   ];

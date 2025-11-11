@@ -4,6 +4,8 @@ import { workflowsTable } from '@/lib/schema';
 import { eq } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 import { queueWorkflowExecution } from '@/lib/workflows/workflow-queue';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { checkStrictRateLimit } from '@/lib/ratelimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +23,12 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Apply rate limiting (3 requests per minute per IP/workflow)
+    const rateLimitResult = await checkStrictRateLimit(request);
+    if (rateLimitResult) {
+      return rateLimitResult;
+    }
+
     const { id } = await context.params;
 
     // Get the workflow
@@ -65,8 +73,50 @@ export async function POST(
       );
     }
 
-    // Parse webhook payload
-    const body = await request.json().catch(() => ({}));
+    // Get raw body for signature verification
+    const rawBody = await request.text();
+    const body = rawBody ? JSON.parse(rawBody) : {};
+
+    // Verify webhook signature if secret is configured
+    const webhookSecret = trigger.config?.webhookSecret as string | undefined;
+    if (webhookSecret) {
+      const signature = request.headers.get('x-webhook-signature') || request.headers.get('x-hub-signature-256');
+
+      if (!signature) {
+        logger.warn({ workflowId: id }, 'Webhook signature missing but secret is configured');
+        return NextResponse.json(
+          { error: 'Webhook signature required' },
+          { status: 401 }
+        );
+      }
+
+      // Compute HMAC signature
+      const hmac = createHmac('sha256', webhookSecret);
+      hmac.update(rawBody);
+      const expectedSignature = 'sha256=' + hmac.digest('hex');
+
+      // Timing-safe comparison to prevent timing attacks
+      try {
+        const signatureBuffer = Buffer.from(signature);
+        const expectedBuffer = Buffer.from(expectedSignature);
+
+        if (signatureBuffer.length !== expectedBuffer.length || !timingSafeEqual(signatureBuffer, expectedBuffer)) {
+          logger.warn({ workflowId: id }, 'Invalid webhook signature');
+          return NextResponse.json(
+            { error: 'Invalid webhook signature' },
+            { status: 401 }
+          );
+        }
+      } catch (error) {
+        logger.warn({ workflowId: id, error }, 'Failed to verify webhook signature');
+        return NextResponse.json(
+          { error: 'Invalid webhook signature' },
+          { status: 401 }
+        );
+      }
+
+      logger.info({ workflowId: id }, 'Webhook signature verified');
+    }
     const headers = Object.fromEntries(request.headers.entries());
     const url = new URL(request.url);
     const queryParams = Object.fromEntries(url.searchParams.entries());

@@ -75,6 +75,39 @@ export async function register() {
     // Initialize workflow queue and scheduler
     const { initializeWorkflowQueue } = await import('./lib/workflows/workflow-queue');
     const { workflowScheduler } = await import('./lib/workflows/workflow-scheduler');
+    const { preloadAllModules } = await import('./lib/workflows/module-preloader');
+    const { preloadCredentialCache } = await import('./lib/workflows/credential-cache');
+
+    // Pre-load all workflow modules (unless explicitly disabled)
+    if (process.env.SKIP_MODULE_PRELOAD !== 'true') {
+      preloadAllModules().then(stats => {
+        logger.info(
+          {
+            totalModules: stats.totalModules,
+            successCount: stats.successCount,
+            failCount: stats.failCount,
+            duration: stats.duration
+          },
+          `✅ Pre-loaded ${stats.successCount} workflow modules in ${stats.duration}ms`
+        );
+
+        // After modules are loaded, pre-load credentials for active users
+        return preloadCredentialCache(100);
+      }).then(credStats => {
+        if (credStats) {
+          logger.info(
+            {
+              usersPreloaded: credStats.usersPreloaded,
+              errors: credStats.errors,
+              duration: credStats.duration
+            },
+            `✅ Pre-loaded credentials for ${credStats.usersPreloaded} active users in ${credStats.duration}ms`
+          );
+        }
+      }).catch(error => {
+        logger.error({ error }, 'Pre-loading failed (non-fatal)');
+      });
+    }
 
     // Initialize workflow queue
     // Concurrency automatically configured based on environment:

@@ -497,8 +497,9 @@ function isTokenExpired(expiresAt: number | null): boolean {
 
 /**
  * Refresh an OAuth token for a specific provider
+ * Exported for proactive token refresh job
  */
-async function refreshOAuthToken(
+export async function refreshOAuthToken(
   userId: string,
   provider: string,
   accountId: string
