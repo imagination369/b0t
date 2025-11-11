@@ -166,10 +166,10 @@ echo "the web UI at Settings → Credentials after setup."
 echo ""
 
 # Ensure DATABASE_URL and REDIS_URL are set for Docker
-if ! grep -q "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/social_cat_dev" .env.local; then
+if ! grep -q "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/b0t_dev" .env.local; then
     echo "" >> .env.local
     echo "# Docker Services (auto-configured)" >> .env.local
-    echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/social_cat_dev" >> .env.local
+    echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/b0t_dev" >> .env.local
     echo "REDIS_URL=redis://localhost:6379" >> .env.local
     print_success "Added Docker connection strings to .env.local"
 fi
@@ -263,7 +263,7 @@ fi
 
 # Test database connection
 echo "Testing database connection..."
-if docker compose exec -T postgres psql -U postgres -d social_cat_dev -c "SELECT 1" > /dev/null 2>&1; then
+if docker compose exec -T postgres psql -U postgres -d b0t_dev -c "SELECT 1" > /dev/null 2>&1; then
     print_success "Database connection successful"
 else
     print_warning "Database connection test failed"
