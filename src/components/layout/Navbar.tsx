@@ -10,7 +10,7 @@ const navigation = [
   { name: 'Clients', href: '/dashboard/clients' },
   { name: 'Credentials', href: '/dashboard/credentials' },
   { name: 'Activity', href: '/dashboard/activity' },
-  { name: 'Settings', href: '/settings' },
+  // { name: 'Settings', href: '/settings' },
 ];
 
 export function Navbar() {
