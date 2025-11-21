@@ -13,7 +13,6 @@ export * as gohighlevel from './gohighlevel';
 export * as hubspot from './hubspot';
 export * as salesforce from './salesforce';
 export * as pipedrive from './pipedrive';
-export * as gohighlevel from './gohighlevel';
 export * as quickbooks from './quickbooks';
 export * as freshbooks from './freshbooks';
 export * as xero from './xero';
