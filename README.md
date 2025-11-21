@@ -265,27 +265,151 @@ For comparable self-hosted setups handling 15,000 workflow executions per month:
 
 ---
 
-## Quick Start
+## Installation
 
-**Prerequisites:** Node.js 20+, Docker Desktop
+### What You Need
+
+1. **[Node.js 20+](https://nodejs.org/)** - JavaScript runtime
+2. **[Docker Desktop](https://www.docker.com/products/docker-desktop/)** - Runs PostgreSQL & Redis containers
+
+That's it. Everything else is handled automatically.
+
+### Setup (5 minutes)
 
 ```bash
-git clone https://github.com/kenkai/b0t.git
+# 1. Clone the repository
+git clone https://github.com/KenKaiii/b0t.git
 cd b0t
+
+# 2. Run automated setup (installs dependencies, starts Docker services, sets up database)
 npm run setup
+
+# 3. Start the application
+npm run dev:full
 ```
 
-That script handles everything: dependencies, Docker containers (PostgreSQL + Redis), database setup, environment config. When it's done:
+Open **http://localhost:3000** and log in with:
+- Email: `admin@b0t.dev`
+- Password: `admin`
+
+**IMPORTANT:** Change the admin password after first login (Settings → Security).
+
+### What the Setup Script Does
+
+1. Checks prerequisites (Node.js 20+, Docker)
+2. Installs npm dependencies
+3. Creates `.env.local` and generates encryption keys automatically
+4. Starts Docker containers (PostgreSQL + Redis)
+5. Runs database migrations
+6. Seeds admin account
+
+### Manual Setup (if automated setup fails)
 
 ```bash
-npm run dev
+# 1. Install dependencies
+npm install
+
+# 2. Copy environment template
+cp .env.example .env.local
+
+# 3. Generate encryption keys (macOS/Linux)
+echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env.local
+echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env.local
+
+# 4. Start Docker services
+npm run docker:start
+
+# 5. Setup database
+npm run db:push
+npm run db:seed
+
+# 6. Start application
+npm run dev:full
 ```
 
-Open http://localhost:3000 and log in (admin@b0t.dev / admin).
+**Windows users:** Use Git Bash or WSL2 for the `openssl` command, or generate keys at [random.org/bytes](https://www.random.org/bytes/) (32 bytes, Base64).
 
-**First workflow:** Try asking Claude Code to "fetch trending GitHub repos and show them in a table." Watch it generate, validate, and execute a multi-step workflow in seconds.
+### Environment Variables (Auto-Configured)
 
-**Full setup guide:** [SETUP_INSTRUCTIONS.md](SETUP_INSTRUCTIONS.md)
+The setup script creates these automatically. Only change if you know what you're doing:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AUTH_SECRET` | Session encryption (auto-generated) | - |
+| `ENCRYPTION_KEY` | API key encryption (auto-generated) | - |
+| `DATABASE_URL` | PostgreSQL connection | `postgresql://postgres:postgres@localhost:5434/b0t_dev` |
+| `REDIS_URL` | Redis connection | `redis://localhost:6380` |
+| `ADMIN_EMAIL` | Initial admin email | `admin@b0t.dev` |
+| `ADMIN_PASSWORD` | Initial admin password | `admin` |
+
+**Critical:** Never lose your `ENCRYPTION_KEY`. It encrypts all API credentials. If lost, all stored credentials become unrecoverable.
+
+### Adding API Keys
+
+Platform API keys (OpenAI, Twitter, etc.) are **not** stored in environment variables. Add them through the web UI:
+
+1. Log in → **Settings** → **Credentials**
+2. Click **Add Credential**
+3. Select service, enter API key
+4. Keys are encrypted with AES-256 and stored per-user
+
+### Verify Installation
+
+```bash
+# Check services are running
+npm run docker:logs
+
+# Run tests
+npm run test
+
+# Check for errors
+npm run typecheck
+npm run lint
+```
+
+### Troubleshooting
+
+**Port conflicts:**
+- PostgreSQL uses port `5434` (Docker maps 5434→5432 to avoid conflicts)
+- Redis uses port `6380` (Docker maps 6380→6379 to avoid conflicts)
+- Next.js uses port `3123`
+
+**Docker issues:**
+```bash
+# Restart services
+npm run docker:stop
+npm run docker:start
+
+# Clean restart (removes data)
+npm run docker:clean
+npm run docker:start
+```
+
+**Database issues:**
+```bash
+# Reset database
+npm run db:push:force
+npm run db:seed
+```
+
+### First Workflow
+
+After logging in, click **Create Workflow** and tell Claude Code:
+
+> "Fetch trending GitHub repos and show them in a table"
+
+Watch it generate, validate, and execute a multi-step workflow in seconds.
+
+### Production Deployment
+
+Deploy to [Railway](https://railway.app/), [Vercel](https://vercel.com/), or any Node.js host:
+
+1. PostgreSQL & Redis are auto-provisioned on Railway
+2. Set `ENCRYPTION_KEY` in environment variables (copy from local `.env.local`)
+3. Set `NEXTAUTH_URL` to your domain
+4. Deploy
+
+**Full deployment guide:** [SETUP_INSTRUCTIONS.md](SETUP_INSTRUCTIONS.md)
 
 ---
 

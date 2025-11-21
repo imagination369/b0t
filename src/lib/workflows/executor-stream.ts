@@ -6,10 +6,14 @@ import {
   accountsTable,
   userCredentialsTable
 } from '@/lib/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { executeStep, normalizeStep, type WorkflowStep } from './control-flow';
+import {
+  buildDependencyGraph,
+  groupIntoWaves,
+} from './parallel-executor';
 
 /**
  * Progress Event Types
@@ -90,6 +94,7 @@ export async function executeWorkflowWithProgress(
         inputs: Record<string, unknown>;
         outputAs?: string;
       }>;
+      returnValue?: string;
     };
 
     logger.info({ workflowId, stepCount: config.steps.length }, 'Executing workflow steps');
@@ -112,100 +117,275 @@ export async function executeWorkflowWithProgress(
           id: userId,
           ...userCredentials,
         },
+        credential: userCredentials, // Add credential namespace for {{credential.platform}} syntax
         trigger: triggerData || {},
         ...userCredentials,
       },
       workflowId,
       runId,
       userId,
+      config, // Include config for UI-set overrides (system prompts, etc.)
     };
 
     let lastOutput: unknown = null;
 
-    // Execute steps sequentially with progress tracking
-    for (let i = 0; i < config.steps.length; i++) {
-      const step = config.steps[i];
-      const normalizedStep = normalizeStep(step) as WorkflowStep;
-      const stepStartTime = Date.now();
+    // Normalize all steps first
+    const normalizedSteps = config.steps.map((step) => normalizeStep(step) as WorkflowStep);
 
-      logger.info({ workflowId, runId, stepId: normalizedStep.id, stepIndex: i }, 'Executing step');
+    // Build dependency graph and group into parallel waves
+    const graph = buildDependencyGraph(normalizedSteps, context);
+    const waves = groupIntoWaves(normalizedSteps, graph);
 
-      // Emit step started event
-      const modulePath = 'module' in normalizedStep ? (normalizedStep.module as string) : 'unknown';
-      onProgress?.({
-        type: 'step_started',
-        stepId: normalizedStep.id,
-        stepIndex: i,
-        totalSteps: config.steps.length,
-        module: modulePath,
-      });
+    logger.info(
+      {
+        workflowId,
+        totalWaves: waves.length,
+        waves: waves.map((wave, idx) => ({
+          wave: idx + 1,
+          steps: wave.map((s) => s.id),
+          count: wave.length,
+        })),
+      },
+      'Grouped steps into execution waves for parallel execution'
+    );
 
-      try {
-        // Execute step (supports actions, conditions, loops)
-        lastOutput = await executeStep(
-          normalizedStep,
-          context,
-          executeModuleFunction,
-          resolveVariables
-        );
+    // Execute each wave sequentially, steps within wave in parallel
+    for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
+      const wave = waves[waveIdx];
 
-        const stepDuration = Date.now() - stepStartTime;
+      if (wave.length === 1) {
+        // Single step - execute directly
+        const step = wave[0];
+        const stepIndex = normalizedSteps.indexOf(step);
+        const stepStartTime = Date.now();
 
-        // Emit step completed event
+        logger.info({ workflowId, runId, stepId: step.id, stepIndex }, 'Executing single step in wave');
+
+        // Emit step started event
+        const modulePath = 'module' in step ? (step.module as string) : 'unknown';
         onProgress?.({
-          type: 'step_completed',
-          stepId: normalizedStep.id,
-          stepIndex: i,
-          duration: stepDuration,
-          output: lastOutput,
-        });
-      } catch (error) {
-        logger.error({ error, workflowId, runId, stepId: normalizedStep.id }, 'Step execution failed');
-
-        // Emit step failed event
-        onProgress?.({
-          type: 'step_failed',
-          stepId: normalizedStep.id,
-          stepIndex: i,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          type: 'step_started',
+          stepId: step.id,
+          stepIndex,
+          totalSteps: config.steps.length,
+          module: modulePath,
         });
 
-        // Update workflow run with error
-        const completedAt = new Date();
-        await db
-          .update(workflowRunsTable)
-          .set({
-            status: 'error',
-            completedAt,
-            duration: completedAt.getTime() - startedAt.getTime(),
+        try {
+          lastOutput = await executeStep(
+            step,
+            context,
+            executeModuleFunction,
+            resolveVariables
+          );
+
+          const stepDuration = Date.now() - stepStartTime;
+
+          onProgress?.({
+            type: 'step_completed',
+            stepId: step.id,
+            stepIndex,
+            duration: stepDuration,
+            output: lastOutput,
+          });
+        } catch (error) {
+          logger.error({ error, workflowId, runId, stepId: step.id }, 'Step execution failed');
+
+          onProgress?.({
+            type: 'step_failed',
+            stepId: step.id,
+            stepIndex,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+
+          // Update workflow run with error
+          const completedAt = new Date();
+          await db
+            .update(workflowRunsTable)
+            .set({
+              status: 'error',
+              completedAt,
+              duration: completedAt.getTime() - startedAt.getTime(),
+              error: error instanceof Error ? error.message : 'Unknown error',
+              errorStep: step.id,
+            })
+            .where(eq(workflowRunsTable.id, runId));
+
+          await db
+            .update(workflowsTable)
+            .set({
+              lastRun: completedAt,
+              lastRunStatus: 'error',
+              lastRunError: error instanceof Error ? error.message : 'Unknown error',
+              runCount: sql`${workflowsTable.runCount} + 1`,
+            })
+            .where(eq(workflowsTable.id, workflowId));
+
+          onProgress?.({
+            type: 'workflow_failed',
+            runId,
             error: error instanceof Error ? error.message : 'Unknown error',
             errorStep: step.id,
-          })
-          .where(eq(workflowRunsTable.id, runId));
+          });
 
-        await db
-          .update(workflowsTable)
-          .set({
-            lastRun: completedAt,
-            lastRunStatus: 'error',
-            lastRunError: error instanceof Error ? error.message : 'Unknown error',
-            runCount: workflow.runCount + 1,
-          })
-          .where(eq(workflowsTable.id, workflowId));
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            errorStep: step.id,
+          };
+        }
+      } else {
+        // Multiple steps - execute in parallel
+        logger.info(
+          {
+            waveNumber: waveIdx + 1,
+            stepCount: wave.length,
+            stepIds: wave.map((s) => s.id),
+          },
+          'Executing steps in parallel (wave execution)'
+        );
 
-        // Emit workflow failed event
-        onProgress?.({
-          type: 'workflow_failed',
-          runId,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          errorStep: normalizedStep.id,
-        });
+        // Emit started events for all steps in parallel wave
+        for (const step of wave) {
+          const stepIndex = normalizedSteps.indexOf(step);
+          const modulePath = 'module' in step ? (step.module as string) : 'unknown';
+          onProgress?.({
+            type: 'step_started',
+            stepId: step.id,
+            stepIndex,
+            totalSteps: config.steps.length,
+            module: modulePath,
+          });
+        }
 
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          errorStep: normalizedStep.id,
-        };
+        const stepStartTimes = new Map<string, number>();
+        wave.forEach((step) => stepStartTimes.set(step.id, Date.now()));
+
+        try {
+          const outputs = await Promise.all(
+            wave.map(async (step) => {
+              try {
+                const output = await executeStep(
+                  step,
+                  context,
+                  executeModuleFunction,
+                  resolveVariables
+                );
+                return { success: true, stepId: step.id, output };
+              } catch (error) {
+                return {
+                  success: false,
+                  stepId: step.id,
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                };
+              }
+            })
+          );
+
+          // Check for failures
+          const failed = outputs.find((o) => !o.success);
+          if (failed) {
+            const step = wave.find((s) => s.id === failed.stepId)!;
+            const stepIndex = normalizedSteps.indexOf(step);
+
+            logger.error({ workflowId, runId, stepId: failed.stepId }, 'Parallel step execution failed');
+
+            onProgress?.({
+              type: 'step_failed',
+              stepId: failed.stepId,
+              stepIndex,
+              error: failed.error || 'Unknown error',
+            });
+
+            // Update workflow run with error
+            const completedAt = new Date();
+            await db
+              .update(workflowRunsTable)
+              .set({
+                status: 'error',
+                completedAt,
+                duration: completedAt.getTime() - startedAt.getTime(),
+                error: failed.error || 'Unknown error',
+                errorStep: failed.stepId,
+              })
+              .where(eq(workflowRunsTable.id, runId));
+
+            await db
+              .update(workflowsTable)
+              .set({
+                lastRun: completedAt,
+                lastRunStatus: 'error',
+                lastRunError: failed.error || 'Unknown error',
+                runCount: sql`${workflowsTable.runCount} + 1`,
+              })
+              .where(eq(workflowsTable.id, workflowId));
+
+            onProgress?.({
+              type: 'workflow_failed',
+              runId,
+              error: failed.error || 'Unknown error',
+              errorStep: failed.stepId,
+            });
+
+            return {
+              success: false,
+              error: failed.error || 'Unknown error',
+              errorStep: failed.stepId,
+            };
+          }
+
+          // All succeeded - emit completed events
+          for (const result of outputs) {
+            const step = wave.find((s) => s.id === result.stepId)!;
+            const stepIndex = normalizedSteps.indexOf(step);
+            const stepStartTime = stepStartTimes.get(result.stepId) || Date.now();
+            const stepDuration = Date.now() - stepStartTime;
+
+            onProgress?.({
+              type: 'step_completed',
+              stepId: result.stepId,
+              stepIndex,
+              duration: stepDuration,
+              output: result.output,
+            });
+
+            lastOutput = result.output;
+          }
+        } catch (error) {
+          logger.error({ error, workflowId, runId }, 'Parallel wave execution failed');
+
+          const completedAt = new Date();
+          await db
+            .update(workflowRunsTable)
+            .set({
+              status: 'error',
+              completedAt,
+              duration: completedAt.getTime() - startedAt.getTime(),
+              error: error instanceof Error ? error.message : 'Unknown error',
+            })
+            .where(eq(workflowRunsTable.id, runId));
+
+          await db
+            .update(workflowsTable)
+            .set({
+              lastRun: completedAt,
+              lastRunStatus: 'error',
+              lastRunError: error instanceof Error ? error.message : 'Unknown error',
+              runCount: sql`${workflowsTable.runCount} + 1`,
+            })
+            .where(eq(workflowsTable.id, workflowId));
+
+          onProgress?.({
+            type: 'workflow_failed',
+            runId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          };
+        }
       }
     }
 
@@ -213,13 +393,42 @@ export async function executeWorkflowWithProgress(
     const completedAt = new Date();
     const totalDuration = completedAt.getTime() - startedAt.getTime();
 
+    // Calculate final output BEFORE saving to database
+    // Return final output - use returnValue if specified, otherwise auto-detect
+    let finalOutput: unknown = context.variables;
+    if (config.returnValue) {
+      finalOutput = resolveValue(config.returnValue, context.variables);
+    } else {
+      // Auto-detect: Filter out internal variables and return only step outputs
+      // Internal variables: user, trigger, credentials (youtube_apikey, openai, etc.)
+      const internalKeys = ['user', 'trigger'];
+      const filteredVars: Record<string, unknown> = {};
+
+      for (const [key, value] of Object.entries(context.variables as Record<string, unknown>)) {
+        // Skip internal variables
+        if (internalKeys.includes(key)) continue;
+        // Skip credential variables (they're from user credentials table)
+        if (key.includes('_apikey') || key.includes('_api_key')) continue;
+        // Skip if it's a known credential platform
+        if (['openai', 'anthropic', 'youtube', 'slack', 'twitter', 'github', 'reddit'].includes(key)) continue;
+
+        filteredVars[key] = value;
+      }
+
+      // If we have filtered variables, use them; otherwise return all (backward compat)
+      if (Object.keys(filteredVars).length > 0) {
+        finalOutput = filteredVars;
+      }
+    }
+
+    // Save filtered output to database
     await db
       .update(workflowRunsTable)
       .set({
         status: 'success',
         completedAt,
         duration: totalDuration,
-        output: lastOutput ? JSON.stringify(lastOutput) : null,
+        output: finalOutput ? JSON.stringify(finalOutput) : null,
       })
       .where(eq(workflowRunsTable.id, runId));
 
@@ -229,21 +438,20 @@ export async function executeWorkflowWithProgress(
         lastRun: completedAt,
         lastRunStatus: 'success',
         lastRunError: null,
-        runCount: workflow.runCount + 1,
+        runCount: sql`${workflowsTable.runCount} + 1`,
       })
       .where(eq(workflowsTable.id, workflowId));
 
     logger.info({ workflowId, runId, duration: totalDuration }, 'Workflow execution completed');
 
-    // Emit workflow completed event
     onProgress?.({
       type: 'workflow_completed',
       runId,
       duration: totalDuration,
-      output: lastOutput,
+      output: finalOutput,
     });
 
-    return { success: true, output: lastOutput };
+    return { success: true, output: finalOutput };
   } catch (error) {
     logger.error({ error, workflowId, userId }, 'Workflow execution failed');
 
@@ -338,6 +546,7 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 
 const CATEGORY_FOLDER_MAP: Record<string, string> = {
   'communication': 'communication',
+  'social': 'social',
   'social media': 'social',
   'ai': 'ai',
   'data': 'data',
@@ -346,7 +555,9 @@ const CATEGORY_FOLDER_MAP: Record<string, string> = {
   'productivity': 'productivity',
   'business': 'business',
   'content': 'content',
+  'dataprocessing': 'dataprocessing',
   'data processing': 'dataprocessing',
+  'devtools': 'devtools',
   'developer tools': 'devtools',
   'dev tools': 'devtools',
   'e-commerce': 'ecommerce',
@@ -490,10 +701,33 @@ async function executeModuleFunction(
         return await func(...orderedValues);
       }
 
+      // Allow partial parameter matching for optional parameters
+      if (orderedValues.length > 0 && orderedValues.length <= paramNames.length) {
+        logger.debug({
+          msg: 'Calling function with partial parameters (remaining are optional)',
+          providedParams: orderedValues.length,
+          totalParams: paramNames.length,
+          mapping: mappingLog
+        });
+        return await func(...orderedValues);
+      }
+
       if (inputKeys.length === paramNames.length) {
         const positionalValues = Object.values(inputs);
         logger.warn({
           msg: 'Using positional parameter matching (input names do not match function signature)',
+          expectedParams: paramNames,
+          providedInputs: Object.keys(inputs),
+          modulePath
+        });
+        return await func(...positionalValues);
+      }
+
+      // Allow positional matching even if fewer inputs than params (for optional parameters)
+      if (inputKeys.length > 0 && inputKeys.length <= paramNames.length) {
+        const positionalValues = Object.values(inputs);
+        logger.warn({
+          msg: 'Using positional parameter matching with partial parameters',
           expectedParams: paramNames,
           providedInputs: Object.keys(inputs),
           modulePath
@@ -532,6 +766,9 @@ async function loadUserCredentials(userId: string): Promise<Record<string, strin
   try {
     const credentialMap: Record<string, string> = {};
 
+    // Load OAuth tokens with automatic token refresh for expired tokens
+    const { getValidOAuthToken, supportsTokenRefresh } = await import('@/lib/oauth-token-manager');
+
     const accounts = await db
       .select()
       .from(accountsTable)
@@ -539,9 +776,28 @@ async function loadUserCredentials(userId: string): Promise<Record<string, strin
 
     for (const account of accounts) {
       if (account.access_token) {
-        const { decrypt } = await import('@/lib/encryption');
-        const decryptedToken = await decrypt(account.access_token);
-        credentialMap[account.provider] = decryptedToken;
+        try {
+          // Check if this provider supports automatic token refresh
+          if (supportsTokenRefresh(account.provider)) {
+            // Get valid token (auto-refreshes if expired)
+            const validToken = await getValidOAuthToken(userId, account.provider);
+            credentialMap[account.provider] = validToken;
+            logger.info({ provider: account.provider }, 'Loaded OAuth token with auto-refresh support');
+          } else {
+            // Fallback to direct decryption for unsupported providers
+            const { decrypt } = await import('@/lib/encryption');
+            const decryptedToken = await decrypt(account.access_token);
+            credentialMap[account.provider] = decryptedToken;
+            logger.debug({ provider: account.provider }, 'Loaded OAuth token (no auto-refresh support)');
+          }
+        } catch (error) {
+          logger.error({
+            error,
+            provider: account.provider,
+            userId
+          }, 'Failed to load OAuth token');
+          // Don't throw - allow workflow to continue with other credentials
+        }
       }
     }
 
@@ -559,8 +815,9 @@ async function loadUserCredentials(userId: string): Promise<Record<string, strin
     }
 
     const platformAliases: Record<string, string[]> = {
-      'youtube': ['youtube_apikey', 'youtube'],
-      'twitter': ['twitter_oauth2', 'twitter'],
+      'youtube': ['youtube_apikey', 'youtube_api_key', 'youtube'],
+      'twitter': ['twitter_oauth2', 'twitter_oauth', 'twitter'],
+      'twitter-oauth': ['twitter_oauth2', 'twitter_oauth', 'twitter'], // Module name: social.twitter-oauth
       'github': ['github_oauth', 'github'],
       'google-sheets': ['googlesheets', 'googlesheets_oauth'],
       'googlesheets': ['googlesheets', 'googlesheets_oauth'],
@@ -573,6 +830,9 @@ async function loadUserCredentials(userId: string): Promise<Record<string, strin
       'slack': ['slack_oauth', 'slack'],
       'discord': ['discord_oauth', 'discord'],
       'stripe': ['stripe_connect', 'stripe'],
+      'rapidapi': ['rapidapi_api_key', 'rapidapi'],
+      'openai': ['openai_api_key', 'openai'],
+      'anthropic': ['anthropic_api_key', 'anthropic'],
     };
 
     for (const [platformName, credentialIds] of Object.entries(platformAliases)) {

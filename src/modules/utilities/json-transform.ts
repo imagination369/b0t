@@ -211,15 +211,16 @@ export function filterObject<T extends Record<string, unknown>>(
  */
 export function flatten(
   obj: Record<string, unknown>,
+  separator: string = '.',
   prefix: string = ''
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(obj)) {
-    const newKey = prefix ? `${prefix}.${key}` : key;
+    const newKey = prefix ? `${prefix}${separator}${key}` : key;
 
     if (isObject(value) && !Array.isArray(value)) {
-      Object.assign(result, flatten(value as Record<string, unknown>, newKey));
+      Object.assign(result, flatten(value as Record<string, unknown>, separator, newKey));
     } else {
       result[newKey] = value;
     }
@@ -232,11 +233,28 @@ export function flatten(
  * Unflatten dot notation object to nested
  * @example unflatten({ 'a.b.c': 1 }) => { a: { b: { c: 1 } } }
  */
-export function unflatten(obj: Record<string, unknown>): Record<string, unknown> {
+export function unflatten(
+  obj: Record<string, unknown>,
+  separator: string = '.'
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (const [path, value] of Object.entries(obj)) {
-    set(result, path, value);
+    const keys = path.split(separator);
+    const lastKey = keys.pop();
+
+    if (!lastKey) continue;
+
+    let current: Record<string, unknown> = result;
+
+    for (const key of keys) {
+      if (!(key in current) || !isObject(current[key])) {
+        current[key] = {};
+      }
+      current = current[key] as Record<string, unknown>;
+    }
+
+    current[lastKey] = value;
   }
 
   return result;
@@ -276,3 +294,35 @@ export function stringifyJson(
     throw new Error(`Failed to stringify JSON: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
+
+/**
+ * Delete value from nested object using dot notation
+ * @example deleteNestedValue({ user: { name: 'John', age: 30 } }, 'user.age') => { user: { name: 'John' } }
+ */
+export function deleteNestedValue<T extends Record<string, unknown>>(
+  obj: T,
+  path: string
+): T {
+  const keys = path.split('.');
+  const lastKey = keys.pop();
+
+  if (!lastKey) return obj;
+
+  let current: Record<string, unknown> = obj;
+
+  for (const key of keys) {
+    if (!(key in current) || !isObject(current[key])) {
+      return obj; // Path doesn't exist, nothing to delete
+    }
+    current = current[key] as Record<string, unknown>;
+  }
+
+  delete current[lastKey];
+  return obj;
+}
+
+// Alias exports for consistency with module registry
+export { get as getNestedValue };
+export { set as setNestedValue };
+export { flatten as flattenObject };
+export { unflatten as unflattenObject };

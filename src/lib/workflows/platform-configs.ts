@@ -58,6 +58,22 @@ export const PLATFORM_CONFIGS: Record<string, PlatformConfig> = {
     ]
   },
 
+  openrouter: {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    category: 'AI',
+    fields: [
+      {
+        key: 'api_key',
+        label: 'API Key',
+        type: 'password',
+        required: true,
+        placeholder: 'sk-or-v1-...',
+        description: 'Your OpenRouter API key from openrouter.ai/keys - Access 300+ AI models from one API'
+      }
+    ]
+  },
+
   cohere: {
     id: 'cohere',
     name: 'Cohere',
@@ -97,29 +113,24 @@ export const PLATFORM_CONFIGS: Record<string, PlatformConfig> = {
   // ============================================
   // SOCIAL MEDIA
   // ============================================
-  twitter: {
-    id: 'twitter',
-    name: 'Twitter (OAuth 1.0a)',
-    category: 'Social Media',
-    fields: [
-      { key: 'api_key', label: 'API Key', type: 'password', required: true },
-      { key: 'api_secret', label: 'API Secret', type: 'password', required: true },
-      { key: 'access_token', label: 'Access Token', type: 'password', required: true },
-      { key: 'access_secret', label: 'Access Token Secret', type: 'password', required: true }
-    ]
-  },
-
-  twitter_oauth2: {
-    id: 'twitter_oauth2',
-    name: 'Twitter (OAuth 2.0)',
+  twitter_oauth2_app: {
+    id: 'twitter_oauth2_app',
+    name: 'Twitter OAuth 2.0 App Credentials',
     category: 'Social Media',
     fields: [
       {
-        key: 'access_token',
-        label: 'Bearer Token',
+        key: 'client_id',
+        label: 'Client ID',
+        type: 'text',
+        required: true,
+        description: 'OAuth 2.0 Client ID from Twitter Developer Portal'
+      },
+      {
+        key: 'client_secret',
+        label: 'Client Secret',
         type: 'password',
         required: true,
-        description: 'OAuth 2.0 Bearer Token for user-level access'
+        description: 'OAuth 2.0 Client Secret from Twitter Developer Portal'
       }
     ]
   },
@@ -309,6 +320,72 @@ export const PLATFORM_CONFIGS: Record<string, PlatformConfig> = {
     fields: [
       { key: 'api_key', label: 'API Key', type: 'password', required: true },
       { key: 'domain', label: 'Domain', type: 'text', required: true, placeholder: 'yourcompany.freshdesk.com' }
+    ]
+  },
+
+  google_oauth_app: {
+    id: 'google_oauth_app',
+    name: 'Google OAuth App Credentials',
+    category: 'Communication',
+    fields: [
+      {
+        key: 'client_id',
+        label: 'Client ID',
+        type: 'text',
+        required: true,
+        description: 'OAuth 2.0 Client ID from Google Cloud Console'
+      },
+      {
+        key: 'client_secret',
+        label: 'Client Secret',
+        type: 'password',
+        required: true,
+        description: 'OAuth 2.0 Client Secret from Google Cloud Console'
+      }
+    ]
+  },
+
+  outlook_oauth_app: {
+    id: 'outlook_oauth_app',
+    name: 'Outlook OAuth App Credentials',
+    category: 'Communication',
+    fields: [
+      {
+        key: 'client_id',
+        label: 'Client ID',
+        type: 'text',
+        required: true,
+        description: 'OAuth 2.0 Client ID from Microsoft Azure Portal'
+      },
+      {
+        key: 'client_secret',
+        label: 'Client Secret',
+        type: 'password',
+        required: true,
+        description: 'OAuth 2.0 Client Secret from Microsoft Azure Portal'
+      }
+    ]
+  },
+
+  youtube_oauth_app: {
+    id: 'youtube_oauth_app',
+    name: 'YouTube OAuth App Credentials',
+    category: 'Social Media',
+    fields: [
+      {
+        key: 'client_id',
+        label: 'Client ID',
+        type: 'text',
+        required: true,
+        description: 'OAuth 2.0 Client ID from Google Cloud Console'
+      },
+      {
+        key: 'client_secret',
+        label: 'Client Secret',
+        type: 'password',
+        required: true,
+        description: 'OAuth 2.0 Client Secret from Google Cloud Console'
+      }
     ]
   },
 
@@ -506,6 +583,37 @@ export const PLATFORM_CONFIGS: Record<string, PlatformConfig> = {
     fields: [
       { key: 'api_token', label: 'API Token', type: 'password', required: true },
       { key: 'company_domain', label: 'Company Domain', type: 'text', required: true, placeholder: 'yourcompany' }
+    ]
+  },
+
+  gohighlevel: {
+    id: 'gohighlevel',
+    name: 'GoHighLevel (OAuth 2.0)',
+    category: 'Business',
+    fields: [
+      {
+        key: 'access_token',
+        label: 'Access Token',
+        type: 'password',
+        required: true,
+        placeholder: 'eyJ...',
+        description: 'OAuth 2.0 access token from GHL (valid for 24 hours)'
+      },
+      {
+        key: 'refresh_token',
+        label: 'Refresh Token',
+        type: 'password',
+        required: false,
+        description: 'OAuth 2.0 refresh token for automatic token renewal'
+      },
+      {
+        key: 'location_id',
+        label: 'Location ID',
+        type: 'text',
+        required: false,
+        placeholder: 'loc_...',
+        description: 'Default location ID (can be overridden per request)'
+      }
     ]
   },
 
@@ -1112,6 +1220,202 @@ export const PLATFORM_CONFIGS: Record<string, PlatformConfig> = {
   },
 
   // ============================================
+  // ANALYTICS
+  // ============================================
+  googleanalytics: {
+    id: 'googleanalytics',
+    name: 'Google Analytics',
+    category: 'Analytics',
+    fields: [
+      {
+        key: 'credentials',
+        label: 'Service Account JSON',
+        type: 'textarea',
+        required: true,
+        description: 'Service account credentials from Google Cloud Console'
+      },
+      {
+        key: 'property_id',
+        label: 'GA4 Property ID',
+        type: 'text',
+        required: true,
+        placeholder: '123456789',
+        description: 'Your GA4 property ID (found in Admin > Property Settings)'
+      }
+    ]
+  },
+
+  algolia: {
+    id: 'algolia',
+    name: 'Algolia',
+    category: 'Analytics',
+    fields: [
+      { key: 'app_id', label: 'Application ID', type: 'text', required: true },
+      { key: 'api_key', label: 'Admin API Key', type: 'password', required: true },
+      {
+        key: 'index_name',
+        label: 'Default Index Name',
+        type: 'text',
+        required: false,
+        description: 'Optional default index (can be overridden per operation)'
+      }
+    ]
+  },
+
+  // ============================================
+  // EMAIL MARKETING
+  // ============================================
+  mailchimp: {
+    id: 'mailchimp',
+    name: 'Mailchimp',
+    category: 'Email Marketing',
+    fields: [
+      { key: 'api_key', label: 'API Key', type: 'password', required: true },
+      {
+        key: 'server_prefix',
+        label: 'Server Prefix',
+        type: 'text',
+        required: true,
+        placeholder: 'us1',
+        description: 'Server prefix from your API key (e.g., us1, us2, etc.)'
+      }
+    ]
+  },
+
+  // ============================================
+  // PRODUCTIVITY & PROJECT MANAGEMENT
+  // ============================================
+  linear: {
+    id: 'linear',
+    name: 'Linear',
+    category: 'Productivity',
+    fields: [
+      {
+        key: 'api_key',
+        label: 'API Key',
+        type: 'password',
+        required: true,
+        description: 'Personal API key from Linear Settings'
+      }
+    ]
+  },
+
+  typeform: {
+    id: 'typeform',
+    name: 'Typeform',
+    category: 'Productivity',
+    fields: [
+      {
+        key: 'api_key',
+        label: 'API Key',
+        type: 'password',
+        required: true,
+        description: 'Personal access token from Typeform account'
+      }
+    ]
+  },
+
+  calendly: {
+    id: 'calendly',
+    name: 'Calendly',
+    category: 'Productivity',
+    fields: [
+      {
+        key: 'api_key',
+        label: 'API Key',
+        type: 'password',
+        required: true,
+        description: 'Personal access token from Calendly integrations'
+      }
+    ]
+  },
+
+  // ============================================
+  // CLOUD STORAGE
+  // ============================================
+  googledrive: {
+    id: 'googledrive',
+    name: 'Google Drive (Service Account)',
+    category: 'Cloud Storage',
+    fields: [
+      {
+        key: 'credentials',
+        label: 'Service Account JSON',
+        type: 'textarea',
+        required: true,
+        description: 'Service account credentials from Google Cloud Console'
+      }
+    ]
+  },
+
+  googledrive_oauth: {
+    id: 'googledrive_oauth',
+    name: 'Google Drive (OAuth)',
+    category: 'Cloud Storage',
+    fields: [
+      { key: 'client_id', label: 'Client ID', type: 'text', required: true },
+      { key: 'client_secret', label: 'Client Secret', type: 'password', required: true },
+      { key: 'refresh_token', label: 'Refresh Token', type: 'password', required: true }
+    ]
+  },
+
+  // ============================================
+  // DESIGN TOOLS
+  // ============================================
+  figma: {
+    id: 'figma',
+    name: 'Figma',
+    category: 'Design Tools',
+    fields: [
+      {
+        key: 'access_token',
+        label: 'Personal Access Token',
+        type: 'password',
+        required: true,
+        description: 'Personal access token from Figma account settings'
+      }
+    ]
+  },
+
+  // ============================================
+  // SOCIAL MEDIA (ADDITIONAL)
+  // ============================================
+  linkedin: {
+    id: 'linkedin',
+    name: 'LinkedIn',
+    category: 'Social Media',
+    fields: [
+      {
+        key: 'access_token',
+        label: 'Access Token',
+        type: 'password',
+        required: true,
+        description: 'OAuth 2.0 access token for LinkedIn API'
+      }
+    ]
+  },
+
+  // ============================================
+  // ENTERPRISE COMMUNICATION
+  // ============================================
+  microsoftteams: {
+    id: 'microsoftteams',
+    name: 'Microsoft Teams',
+    category: 'Communication',
+    fields: [
+      { key: 'client_id', label: 'Client ID', type: 'text', required: true },
+      { key: 'client_secret', label: 'Client Secret', type: 'password', required: true },
+      {
+        key: 'tenant_id',
+        label: 'Tenant ID',
+        type: 'text',
+        required: true,
+        description: 'Azure AD tenant ID'
+      }
+    ]
+  },
+
+  // ============================================
   // GENERAL
   // ============================================
   rapidapi: {
@@ -1129,6 +1433,111 @@ export const PLATFORM_CONFIGS: Record<string, PlatformConfig> = {
     category: 'General',
     fields: [
       { key: 'value', label: 'API Key / Token', type: 'password', required: true }
+    ]
+  },
+
+  // ============================================
+  // MCP (MODEL CONTEXT PROTOCOL) SERVERS
+  // ============================================
+  tavily: {
+    id: 'tavily',
+    name: 'Tavily Search',
+    category: 'MCP',
+    fields: [
+      {
+        key: 'api_key',
+        label: 'API Key',
+        type: 'password',
+        required: true,
+        placeholder: 'tvly-...',
+        description: 'Your Tavily API key from tavily.com'
+      }
+    ]
+  },
+
+  brave: {
+    id: 'brave',
+    name: 'Brave Search',
+    category: 'MCP',
+    fields: [
+      {
+        key: 'api_key',
+        label: 'API Key',
+        type: 'password',
+        required: true,
+        description: 'Your Brave Search API key from brave.com/search/api'
+      }
+    ]
+  },
+
+  postgres_connection: {
+    id: 'postgres_connection',
+    name: 'PostgreSQL Connection',
+    category: 'MCP',
+    fields: [
+      {
+        key: 'connection_string',
+        label: 'Connection String',
+        type: 'password',
+        required: true,
+        placeholder: 'postgresql://user:pass@host:5432/dbname',
+        description: 'PostgreSQL connection string'
+      }
+    ]
+  },
+
+  github_token: {
+    id: 'github_token',
+    name: 'GitHub Token (MCP)',
+    category: 'MCP',
+    fields: [
+      {
+        key: 'token',
+        label: 'Personal Access Token',
+        type: 'password',
+        required: true,
+        placeholder: 'ghp_...',
+        description: 'GitHub Personal Access Token with repo permissions'
+      }
+    ]
+  },
+
+  slack_bot: {
+    id: 'slack_bot',
+    name: 'Slack Bot',
+    category: 'MCP',
+    fields: [
+      {
+        key: 'bot_token',
+        label: 'Bot Token',
+        type: 'password',
+        required: true,
+        placeholder: 'xoxb-...',
+        description: 'Slack Bot User OAuth Token'
+      },
+      {
+        key: 'team_id',
+        label: 'Team ID',
+        type: 'text',
+        required: true,
+        placeholder: 'T0123456789',
+        description: 'Your Slack Team/Workspace ID'
+      }
+    ]
+  },
+
+  google_oauth: {
+    id: 'google_oauth',
+    name: 'Google OAuth',
+    category: 'MCP',
+    fields: [
+      {
+        key: 'oauth_token',
+        label: 'OAuth Token',
+        type: 'password',
+        required: true,
+        description: 'Google OAuth access token for Drive access'
+      }
     ]
   },
 };

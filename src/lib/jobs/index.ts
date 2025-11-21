@@ -1,5 +1,11 @@
 import { scheduler, ScheduledJob } from '../scheduler';
-import { exampleEvery5Minutes, exampleHourly, exampleDaily } from './example';
+import { cleanupOAuthState } from './cleanup-oauth-state';
+import { refreshExpiringTokens } from './refresh-expiring-tokens';
+import { cleanupWorkflowRuns } from './cleanup-workflow-runs';
+import { cleanupChatMessages } from './cleanup-chat-messages';
+import { cleanupJobLogs } from './cleanup-job-logs';
+import { cleanupTweetReplies } from './cleanup-tweet-replies';
+import { cleanupInvitations } from './cleanup-invitations';
 import { logger } from '../logger';
 import { db } from '../db';
 import { appSettingsTable } from '../schema';
@@ -19,24 +25,50 @@ import { appSettingsTable } from '../schema';
  * Set enabled: false to disable a job
  */
 const jobs: ScheduledJob[] = [
-  // Example jobs (disabled by default)
+  // Production jobs - authentication & tokens
   {
-    name: 'example-every-5-minutes',
-    schedule: '*/5 * * * *', // Every 5 minutes
-    task: exampleEvery5Minutes,
-    enabled: false, // Set to true to enable this example job
+    name: 'cleanup-oauth-state',
+    schedule: '*/15 * * * *', // Every 15 minutes
+    task: cleanupOAuthState,
+    enabled: true,
   },
   {
-    name: 'example-hourly',
-    schedule: '0 * * * *', // Every hour at minute 0
-    task: exampleHourly,
-    enabled: false, // Set to true to enable this example job
+    name: 'refresh-expiring-tokens',
+    schedule: '*/15 * * * *', // Every 15 minutes
+    task: refreshExpiringTokens,
+    enabled: true,
+  },
+
+  // Data retention cleanup jobs - run daily at off-peak hours
+  {
+    name: 'cleanup-workflow-runs',
+    schedule: '0 2 * * *', // Daily at 2 AM
+    task: cleanupWorkflowRuns,
+    enabled: true,
   },
   {
-    name: 'example-daily',
-    schedule: '0 0 * * *', // Every day at midnight
-    task: exampleDaily,
-    enabled: false, // Set to true to enable this example job
+    name: 'cleanup-chat-messages',
+    schedule: '0 3 * * *', // Daily at 3 AM
+    task: cleanupChatMessages,
+    enabled: true,
+  },
+  {
+    name: 'cleanup-job-logs',
+    schedule: '0 4 * * *', // Daily at 4 AM
+    task: cleanupJobLogs,
+    enabled: true,
+  },
+  {
+    name: 'cleanup-tweet-replies',
+    schedule: '0 5 * * *', // Daily at 5 AM
+    task: cleanupTweetReplies,
+    enabled: true,
+  },
+  {
+    name: 'cleanup-invitations',
+    schedule: '0 6 * * *', // Daily at 6 AM
+    task: cleanupInvitations,
+    enabled: true,
   },
 
   // Add your custom scheduled jobs here
@@ -85,8 +117,11 @@ async function loadJobSettings(jobName: string): Promise<{ enabled?: boolean; in
  * Jobs will load their enabled state and schedule from the database if configured via UI.
  */
 export async function initializeScheduler() {
-  logger.info('Initializing job scheduler');
-  logger.info('Note: Workflow-based jobs are managed through the workflow system');
+  // Simplified logging for development
+  if (process.env.NODE_ENV !== 'development') {
+    logger.info('Initializing job scheduler');
+    logger.info('Note: Workflow-based jobs are managed through the workflow system');
+  }
 
   // Load settings from database for each job
   for (const job of jobs) {
@@ -110,10 +145,13 @@ export async function initializeScheduler() {
     return dbSettings.enabled !== undefined ? dbSettings.enabled : job.enabled;
   });
 
-  logger.info(
-    { totalJobs: scheduler.getJobs().length, enabledCount: enabledJobs.length },
-    'Node-cron scheduler started'
-  );
+  // Only log in production or if explicitly requested
+  if (process.env.NODE_ENV !== 'development' || process.env.LOG_SCHEDULER === 'true') {
+    logger.info(
+      { totalJobs: scheduler.getJobs().length, enabledCount: enabledJobs.length },
+      'Node-cron scheduler started'
+    );
+  }
 }
 
 /**
@@ -125,7 +163,11 @@ export function stopScheduler() {
 
 // Export individual job functions for manual testing
 export {
-  exampleEvery5Minutes,
-  exampleHourly,
-  exampleDaily,
+  cleanupOAuthState,
+  refreshExpiringTokens,
+  cleanupWorkflowRuns,
+  cleanupChatMessages,
+  cleanupJobLogs,
+  cleanupTweetReplies,
+  cleanupInvitations,
 };

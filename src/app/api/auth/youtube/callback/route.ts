@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { db } from '@/lib/db';
-import { oauthStateTable, accountsTable } from '@/lib/schema';
+import { oauthStateTable, accountsTable, userCredentialsTable } from '@/lib/schema';
 import { logger } from '@/lib/logger';
 import { eq, and } from 'drizzle-orm';
 import { encrypt } from '@/lib/encryption';
+import { getOAuthAppCredentials } from '@/lib/oauth-credential-helper';
 
 /**
  * YouTube OAuth 2.0 Callback Handler
@@ -118,12 +119,105 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check if YouTube OAuth 2.0 credentials are configured
-    if (!process.env.YOUTUBE_CLIENT_ID || !process.env.YOUTUBE_CLIENT_SECRET) {
-      logger.error('YouTube OAuth 2.0 credentials not configured');
+    // Get YouTube OAuth app credentials from database
+    const [appCred] = await db
+      .select()
+      .from(userCredentialsTable)
+      .where(eq(userCredentialsTable.platform, 'youtube_oauth_app'))
+      .limit(1);
+
+    if (!appCred) {
+      logger.error('YouTube OAuth app credentials not configured');
       return NextResponse.json(
         { error: 'YouTube OAuth is not configured' },
         { status: 500 }
+      );
+    }
+
+    // Get client credentials
+    let clientId: string;
+    let clientSecret: string;
+    try {
+      const creds = getOAuthAppCredentials(appCred, 'YouTube');
+      clientId = creds.clientId;
+      clientSecret = creds.clientSecret;
+    } catch (error) {
+      logger.error({ error }, 'Failed to get YouTube OAuth app credentials');
+      return new NextResponse(
+        `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Configuration Error</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: #1a1625;
+        color: #f5f3ff;
+      }
+      .container {
+        text-align: center;
+        padding: 48px;
+        max-width: 420px;
+        background: #241d30;
+        border: 1px solid #3a2f4a;
+        border-radius: 12px;
+      }
+      .icon {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 24px;
+        border-radius: 50%;
+        background: rgba(255, 68, 68, 0.1);
+        border: 2px solid #ff4444;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 36px;
+        color: #ff4444;
+        font-weight: bold;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+        font-weight: 700;
+        color: #f5f3ff;
+        letter-spacing: -0.02em;
+      }
+      .message {
+        margin: 0 0 8px;
+        color: #a599c8;
+        font-size: 15px;
+        line-height: 1.6;
+      }
+      .timer {
+        margin-top: 24px;
+        color: #a599c8;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="icon">!</div>
+      <h1>Configuration Error</h1>
+      <p class="message">${error instanceof Error ? error.message : 'YouTube OAuth is not configured'}</p>
+      <p class="timer">Window closing in 5 seconds...</p>
+    </div>
+    <script>
+      setTimeout(() => window.close(), 5000);
+    </script>
+  </body>
+</html>`,
+        {
+          status: 500,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        }
       );
     }
 
@@ -145,11 +239,11 @@ export async function GET(request: NextRequest) {
     // Initialize Google OAuth2 client
     const callbackUrl = process.env.NEXTAUTH_URL
       ? `${process.env.NEXTAUTH_URL}/api/auth/youtube/callback`
-      : 'http://localhost:3000/api/auth/youtube/callback';
+      : 'http://localhost:3123/api/auth/youtube/callback';
 
     const oauth2Client = new google.auth.OAuth2(
-      process.env.YOUTUBE_CLIENT_ID,
-      process.env.YOUTUBE_CLIENT_SECRET,
+      clientId,
+      clientSecret,
       callbackUrl
     );
 

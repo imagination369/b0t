@@ -9,6 +9,7 @@
  * - E-Signatures: DocuSign, HelloSign
  */
 
+export * as gohighlevel from './gohighlevel';
 export * as hubspot from './hubspot';
 export * as salesforce from './salesforce';
 export * as pipedrive from './pipedrive';

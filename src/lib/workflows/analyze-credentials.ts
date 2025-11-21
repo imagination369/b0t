@@ -48,6 +48,7 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
   'xml': { category: 'none' },
   'pdf': { category: 'none' },
   'image': { category: 'none' },
+  'drizzle-utils': { category: 'none' }, // Internal database module (uses DATABASE_URL)
 
   // ============================================
   // OPTIONAL CREDENTIALS
@@ -79,23 +80,23 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
     category: 'both',
     preferredMethod: 'api_key', // API key is simpler for read-only operations
     functionRequirements: {
-      // Works with API key (read-only)
+      // Works with API key (read-only) - auto-detection will use these
       'searchVideosWithApiKey': 'api_key',
       'getVideoDetailsWithApiKey': 'api_key',
       'getChannelDetailsWithApiKey': 'api_key',
-      // OAuth versions (for backwards compatibility or when using OAuth)
-      'searchVideos': 'oauth',
-      'getVideoDetails': 'oauth',
-      'getChannelDetails': 'oauth',
+      // Read-only operations (auto-detected, will use API key if available)
+      'searchVideos': 'api_key', // Auto-switches to searchVideosWithApiKey
+      'getVideoDetails': 'api_key', // Auto-switches to getVideoDetailsWithApiKey
+      'getChannelDetails': 'api_key', // Auto-switches to getChannelDetailsWithApiKey
+      'getVideoComments': 'api_key', // Read-only
+      'getRecentVideos': 'api_key', // Read-only
+      'getComment': 'api_key', // Read-only
       // Require OAuth (write operations)
       'postComment': 'oauth',
       'replyToComment': 'oauth',
       'deleteComment': 'oauth',
-      'getVideoComments': 'oauth',
-      'getRecentVideos': 'oauth',
       'markCommentAsSpam': 'oauth',
       'setCommentModerationStatus': 'oauth',
-      'getComment': 'oauth',
     },
   },
 
@@ -111,6 +112,16 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
       // OAuth 1.0a functions
       'getUserTimeline': 'api_key',
       'searchTweets': 'api_key',
+    },
+  },
+
+  // Twitter OAuth 2.0 User Context (OAuth only)
+  'twitter-oauth': {
+    category: 'oauth',
+    functionRequirements: {
+      'createTweet': 'oauth',
+      'replyToTweet': 'oauth',
+      'createThread': 'oauth',
     },
   },
 
@@ -218,6 +229,42 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
     },
   },
 
+  // GoHighLevel: OAuth 2.0 only (API v2)
+  'gohighlevel': {
+    category: 'oauth',
+    preferredMethod: 'oauth',
+    functionRequirements: {
+      // Contacts
+      'createContact': 'oauth',
+      'getContact': 'oauth',
+      'updateContact': 'oauth',
+      'deleteContact': 'oauth',
+      'searchContacts': 'oauth',
+      // Conversations
+      'getConversations': 'oauth',
+      'sendMessage': 'oauth',
+      'getMessages': 'oauth',
+      // Calendar & Appointments
+      'getCalendars': 'oauth',
+      'createAppointment': 'oauth',
+      'getAppointment': 'oauth',
+      'updateAppointment': 'oauth',
+      // Opportunities
+      'getPipelines': 'oauth',
+      'createOpportunity': 'oauth',
+      'getOpportunity': 'oauth',
+      'updateOpportunity': 'oauth',
+      'deleteOpportunity': 'oauth',
+      // Tags & Custom Fields
+      'getTags': 'oauth',
+      'addTagToContact': 'oauth',
+      'removeTagFromContact': 'oauth',
+      'getCustomFields': 'oauth',
+      // Locations
+      'getLocation': 'oauth',
+    },
+  },
+
   // Slack: Supports Bot Tokens and User OAuth
   'slack': {
     category: 'both',
@@ -266,6 +313,8 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
   // OAUTH ONLY
   // ============================================
 
+  'gmail': { category: 'oauth' },
+  'outlook': { category: 'oauth' },
   'instagram': { category: 'oauth' },
   'tiktok': { category: 'oauth' },
   'linkedin': { category: 'oauth' },
@@ -279,6 +328,7 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
   // AI Platforms
   'openai': { category: 'api_key' },
   'anthropic': { category: 'api_key' },
+  'openrouter': { category: 'api_key' },
   'cohere': { category: 'api_key' },
   'huggingface': { category: 'api_key' },
   'replicate': { category: 'api_key' },
@@ -308,6 +358,54 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
   'hunter': { category: 'api_key' },
   'apollo': { category: 'api_key' },
   'clearbit': { category: 'api_key' },
+
+  // Analytics & Search
+  'google-analytics': { category: 'api_key' }, // Service Account JSON
+  'algolia': { category: 'api_key' },
+
+  // Email Marketing
+  'mailchimp': { category: 'api_key' },
+
+  // Project Management & Productivity
+  'linear': { category: 'api_key' },
+  'typeform': { category: 'api_key' },
+  'calendly': { category: 'api_key' },
+
+  // Cloud Storage
+  'google-drive': {
+    category: 'both',
+    preferredMethod: 'api_key', // Service Account simpler for automation
+    functionRequirements: {
+      'listFiles': 'api_key',
+      'uploadFile': 'api_key',
+      'deleteFile': 'api_key',
+      'getFile': 'api_key',
+    },
+  },
+
+  // Design Tools
+  'figma': { category: 'api_key' },
+
+  // Enterprise Communication
+  'microsoft-teams': {
+    category: 'both',
+    preferredMethod: 'api_key', // App credentials simpler for bot scenarios
+    functionRequirements: {
+      'sendMessage': 'api_key',
+    },
+  },
+
+  // ============================================
+  // MCP (MODEL CONTEXT PROTOCOL) SERVERS
+  // ============================================
+
+  // MCP servers used by AI agents
+  'tavily': { category: 'api_key' }, // Tavily search MCP server
+  'brave': { category: 'api_key' }, // Brave search MCP server
+  'postgres_connection': { category: 'api_key' }, // PostgreSQL MCP server
+  'github_token': { category: 'api_key' }, // GitHub MCP server
+  'slack_bot': { category: 'api_key' }, // Slack MCP server
+  'google_oauth': { category: 'api_key' }, // Google Drive MCP server
 };
 
 /**
@@ -326,7 +424,7 @@ export function analyzeWorkflowCredentials(
     }>;
   },
   trigger?: {
-    type: 'cron' | 'manual' | 'webhook' | 'telegram' | 'discord' | 'chat';
+    type: 'cron' | 'manual' | 'webhook' | 'telegram' | 'discord' | 'chat' | 'chat-input';
     config: Record<string, unknown>;
   }
 ): RequiredCredential[] {
@@ -372,15 +470,25 @@ export function analyzeWorkflowCredentials(
 
         if (parts.length >= 3) {
           // Extract platform and function name
-          const platform = parts[parts.length - 2].toLowerCase();
+          let platform = parts[parts.length - 2].toLowerCase();
           const functionName = parts[parts.length - 1];
+
+          // Normalize platform names for services that have multiple modules
+          // E.g., "rapidapi-twitter" -> "rapidapi", "rapidapi-newsapi" -> "rapidapi"
+          if (platform.startsWith('rapidapi-')) {
+            platform = 'rapidapi';
+          }
 
           // Only track if this is an actual platform (not a utility module)
           // Check if platform exists in PLATFORM_CAPABILITIES or if it might need credentials
           // Skip utility modules like array-utils, scoring, etc.
+          // Skip ai-sdk since it's just an interface - we detect the actual provider below
+          // Skip ai-agent since it's just a wrapper - we detect the actual provider below
           const isUtilityModule = parts[0] === 'utilities' || parts[0] === 'util';
+          const isAiSdk = platform === 'ai-sdk';
+          const isAiAgent = platform === 'ai-agent';
 
-          if (!isUtilityModule) {
+          if (!isUtilityModule && !isAiSdk && !isAiAgent) {
             // Track this platform and function usage
             if (!platformUsage.has(platform)) {
               platformUsage.set(platform, new Set());
@@ -392,9 +500,11 @@ export function analyzeWorkflowCredentials(
         // Special handling for AI SDK (can use multiple providers)
         if (modulePath.includes('ai-sdk')) {
           const inputs = s.inputs as Record<string, unknown> | undefined;
-          const provider = inputs?.provider as string | undefined;
-          const model = inputs?.model as string | undefined;
-          const apiKey = inputs?.apiKey as string | undefined;
+          // AI SDK inputs can be at top level or nested in 'options'
+          const options = (inputs?.options as Record<string, unknown> | undefined) || inputs;
+          const provider = options?.provider as string | undefined;
+          const model = options?.model as string | undefined;
+          const apiKey = options?.apiKey as string | undefined;
 
           // Check if apiKey references a variable
           if (apiKey && typeof apiKey === 'string' && apiKey.includes('{{user.')) {
@@ -403,18 +513,82 @@ export function analyzeWorkflowCredentials(
               explicitCredentials.add(match[1]);
             }
           } else {
-            // Detect provider from config
+            // Detect provider from config - prioritize explicit provider field
             let detectedProvider: string | null = null;
-            if (provider === 'anthropic' || (model && (model.includes('claude') || model.includes('anthropic')))) {
+
+            if (provider === 'openrouter') {
+              detectedProvider = 'openrouter';
+            } else if (provider === 'anthropic' || (model && (model.includes('claude') || model.includes('anthropic')))) {
               detectedProvider = 'anthropic';
             } else if (provider === 'openai' || (model && (model.includes('gpt') || model.includes('o1') || model.includes('o3')))) {
               detectedProvider = 'openai';
+            } else if (model && model.includes('/')) {
+              // OpenRouter models contain a slash (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet')
+              detectedProvider = 'openrouter';
             }
 
             if (detectedProvider) {
               if (!platformUsage.has(detectedProvider)) {
                 platformUsage.set(detectedProvider, new Set());
               }
+            }
+          }
+        }
+
+        // Special handling for AI agents with MCP tools
+        if (modulePath.includes('ai-agent') || modulePath.includes('runAgent')) {
+          const inputs = s.inputs as Record<string, unknown> | undefined;
+          const options = (inputs?.options as Record<string, unknown> | undefined) || inputs;
+          const toolOptions = options?.toolOptions as Record<string, unknown> | undefined;
+
+          // Check if agent is using MCP tools
+          if (toolOptions?.useMCP) {
+            const mcpServers = toolOptions.mcpServers as string[] | undefined;
+
+            if (mcpServers && Array.isArray(mcpServers)) {
+              // Only track MCP servers that require credentials
+              // Map server names to credential platform names (only for servers with credentials)
+              const serverCredentialMap: Record<string, string> = {
+                'tavily-search': 'tavily',
+                'brave-search': 'brave',
+                'postgres': 'postgres_connection',
+                'github': 'github_token',
+                'slack': 'slack_bot',
+                'google-drive': 'google_oauth',
+              };
+
+              for (const serverName of mcpServers) {
+                const credentialPlatform = serverCredentialMap[serverName];
+
+                // Only add to platform usage if this server requires credentials
+                if (credentialPlatform) {
+                  if (!platformUsage.has(credentialPlatform)) {
+                    platformUsage.set(credentialPlatform, new Set(['MCP']));
+                  }
+                }
+              }
+            }
+          }
+
+          // Also detect the AI provider for the agent itself
+          const provider = options?.provider as string | undefined;
+          const model = options?.model as string | undefined;
+
+          let detectedProvider: string | null = null;
+          if (provider === 'openrouter') {
+            detectedProvider = 'openrouter';
+          } else if (provider === 'anthropic' || (model && (model.includes('claude') || model.includes('anthropic')))) {
+            detectedProvider = 'anthropic';
+          } else if (provider === 'openai' || (model && (model.includes('gpt') || model.includes('o1') || model.includes('o3')))) {
+            detectedProvider = 'openai';
+          } else if (model && model.includes('/')) {
+            // OpenRouter models contain a slash
+            detectedProvider = 'openrouter';
+          }
+
+          if (detectedProvider) {
+            if (!platformUsage.has(detectedProvider)) {
+              platformUsage.set(detectedProvider, new Set());
             }
           }
         }
@@ -441,9 +615,24 @@ export function analyzeWorkflowCredentials(
   processSteps(config.steps);
 
   // Combine explicit credentials with platform usage
-  for (const platform of explicitCredentials) {
-    if (!platformUsage.has(platform)) {
-      platformUsage.set(platform, new Set());
+  // Normalize credential names to platform names (e.g., youtube_api_key -> youtube)
+  for (const credentialName of explicitCredentials) {
+    // Try to extract platform name from credential variable
+    // Pattern: platform_api_key, platform_token, platform_key, etc.
+    let platformName = credentialName;
+
+    // Remove common suffixes to get platform name
+    const suffixes = ['_api_key', '_apikey', '_token', '_key', '_secret', '_access_token', '_refresh_token'];
+    for (const suffix of suffixes) {
+      if (credentialName.endsWith(suffix)) {
+        platformName = credentialName.substring(0, credentialName.length - suffix.length);
+        break;
+      }
+    }
+
+    // Only add if it's not already tracked (avoid duplicates)
+    if (!platformUsage.has(platformName)) {
+      platformUsage.set(platformName, new Set());
     }
   }
 
@@ -568,11 +757,14 @@ export function getPlatformDisplayName(platform: string): string {
     // AI
     openai: 'OpenAI',
     anthropic: 'Anthropic',
+    openrouter: 'OpenRouter',
     cohere: 'Cohere',
     huggingface: 'Hugging Face',
     replicate: 'Replicate',
 
     // Communication
+    gmail: 'Gmail',
+    outlook: 'Outlook',
     slack: 'Slack',
     resend: 'Resend',
     sendgrid: 'SendGrid',
@@ -603,6 +795,35 @@ export function getPlatformDisplayName(platform: string): string {
     hunter: 'Hunter.io',
     apollo: 'Apollo.io',
     clearbit: 'Clearbit',
+
+    // Analytics & Search
+    'google-analytics': 'Google Analytics',
+    algolia: 'Algolia',
+
+    // Email Marketing
+    mailchimp: 'Mailchimp',
+
+    // Project Management & Productivity
+    linear: 'Linear',
+    typeform: 'Typeform',
+    calendly: 'Calendly',
+
+    // Cloud Storage
+    'google-drive': 'Google Drive',
+
+    // Design Tools
+    figma: 'Figma',
+
+    // Enterprise Communication
+    'microsoft-teams': 'Microsoft Teams',
+
+    // MCP (Model Context Protocol) Servers
+    tavily: 'Tavily Search',
+    brave: 'Brave Search',
+    postgres_connection: 'PostgreSQL Connection',
+    github_token: 'GitHub Token (MCP)',
+    slack_bot: 'Slack Bot',
+    google_oauth: 'Google OAuth',
   };
 
   return names[platform] || platform.charAt(0).toUpperCase() + platform.slice(1);
@@ -628,11 +849,14 @@ export function getPlatformIcon(platform: string): string {
     // AI
     openai: 'Sparkles',
     anthropic: 'Zap',
+    openrouter: 'Route',
     cohere: 'Sparkles',
     huggingface: 'Brain',
     replicate: 'Copy',
 
     // Communication
+    gmail: 'Mail',
+    outlook: 'Mail',
     slack: 'MessageCircle',
     resend: 'Mail',
     sendgrid: 'Mail',
@@ -663,6 +887,35 @@ export function getPlatformIcon(platform: string): string {
     hunter: 'Search',
     apollo: 'Target',
     clearbit: 'Users',
+
+    // Analytics & Search
+    'google-analytics': 'BarChart3',
+    algolia: 'Search',
+
+    // Email Marketing
+    mailchimp: 'Mail',
+
+    // Project Management & Productivity
+    linear: 'CheckSquare',
+    typeform: 'ListChecks',
+    calendly: 'Calendar',
+
+    // Cloud Storage
+    'google-drive': 'FolderOpen',
+
+    // Design Tools
+    figma: 'Figma',
+
+    // Enterprise Communication
+    'microsoft-teams': 'MessageSquare',
+
+    // MCP (Model Context Protocol) Servers
+    tavily: 'Search',
+    brave: 'Search',
+    postgres_connection: 'Database',
+    github_token: 'Github',
+    slack_bot: 'MessageCircle',
+    google_oauth: 'FolderOpen',
   };
 
   return icons[platform] || 'Key';

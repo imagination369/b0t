@@ -8,23 +8,60 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { Button } from '@/components/ui/button';
-import { Copy, Download, Check } from 'lucide-react';
-import { useState } from 'react';
+import { Copy, Download, Check, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
+import dynamic from 'next/dynamic';
+import { logger } from '@/lib/logger';
+
+const ReactJson = dynamic(() => import('@microlink/react-json-view'), { ssr: false });
 
 interface OutputRendererProps {
   output: unknown;
   modulePath?: string;
   displayHint?: OutputDisplayConfig;
+  onClose?: () => void;
 }
 
-export function OutputRenderer({ output, modulePath, displayHint }: OutputRendererProps) {
+export function OutputRenderer({ output, modulePath, displayHint, onClose }: OutputRendererProps) {
+
+  // Auto-parse JSON strings for table display
+  // If output is a JSON string and displayHint expects a table, parse it
+  let parsedOutput = output;
+  if (typeof output === 'string' && displayHint?.type === 'table') {
+    try {
+      // Try to parse as JSON
+      const trimmed = output.trim();
+      if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+        parsedOutput = JSON.parse(output);
+      }
+    } catch (error) {
+      // If parsing fails, keep original output
+      logger.warn({ error }, 'Failed to parse output as JSON');
+    }
+  }
+
+  // Extract table data from context object if needed
+  // If output is an object (not array) and we expect a table, look for common table data keys
+  if (typeof parsedOutput === 'object' && parsedOutput !== null && !Array.isArray(parsedOutput) && displayHint?.type === 'table') {
+    const outputObj = parsedOutput as Record<string, unknown>;
+    const possibleDataKeys = ['finalAnalysisTable', 'finalTableData', 'tableData', 'results', 'data', 'output'];
+
+    for (const key of possibleDataKeys) {
+      if (key in outputObj && Array.isArray(outputObj[key])) {
+        parsedOutput = outputObj[key];
+        break;
+      }
+    }
+  }
+
   // Priority: 1) displayHint from workflow config, 2) module-based detection, 3) structure-based detection
-  const display = displayHint || detectOutputDisplay(modulePath || '', output);
+  const display = displayHint || detectOutputDisplay(modulePath || '', parsedOutput);
 
   switch (display.type) {
     case 'table':
-      return <DataTable data={output} config={display.config} />;
+      return <DataTable data={parsedOutput} config={display.config} onClose={onClose} />;
 
     case 'image':
       return <ImageDisplay data={output} config={display.config} />;
@@ -33,23 +70,38 @@ export function OutputRenderer({ output, modulePath, displayHint }: OutputRender
       return <ImageGrid data={output} config={display.config} />;
 
     case 'markdown':
-      return <MarkdownDisplay content={output} />;
+      return <MarkdownDisplay content={output} onClose={onClose} />;
 
     case 'text':
-      return <TextDisplay content={output} />;
+      return <TextDisplay content={output} onClose={onClose} />;
 
     case 'list':
-      return <ListDisplay data={output} />;
+      return <ListDisplay data={output} onClose={onClose} />;
 
     case 'json':
     default:
-      return <JSONDisplay data={output} />;
+      return <JSONDisplay data={output} onClose={onClose} />;
   }
 }
 
-// Action buttons component for copy/download
-function ActionButtons({ content, filename, format }: { content: string; filename: string; format: 'md' | 'txt' | 'json' | 'csv' }) {
+// Floating action buttons component for all output types
+function FloatingActionButtons({
+  content,
+  filename,
+  format,
+  onClose
+}: {
+  content: string;
+  filename: string;
+  format: 'md' | 'txt' | 'json' | 'csv';
+  onClose?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleCopy = async () => {
     try {
@@ -75,13 +127,37 @@ function ActionButtons({ content, filename, format }: { content: string; filenam
     toast.success(`Downloaded as ${filename}.${format}`);
   };
 
-  return (
-    <div className="flex gap-2">
+  const buttons = (
+    <div
+      style={{
+        position: 'fixed',
+        top: '16px',
+        right: '16px',
+        zIndex: 9998,
+        display: 'flex',
+        gap: '8px',
+        pointerEvents: 'auto',
+        isolation: 'isolate',
+        backfaceVisibility: 'hidden',
+        transform: 'translateZ(0)',
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+      onMouseDown={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+    >
       <Button
         size="sm"
         variant="outline"
-        onClick={handleCopy}
-        className="h-8 gap-2"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleCopy();
+        }}
+        className="h-8 gap-2 bg-background shadow-xl border-2 border-primary/20"
       >
         {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
         {copied ? 'Copied' : 'Copy'}
@@ -89,26 +165,43 @@ function ActionButtons({ content, filename, format }: { content: string; filenam
       <Button
         size="sm"
         variant="outline"
-        onClick={handleDownload}
-        className="h-8 gap-2"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleDownload();
+        }}
+        className="h-8 gap-2 bg-background shadow-xl border-2 border-primary/20"
       >
         <Download className="h-3.5 w-3.5" />
         Download
       </Button>
+      {onClose && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="h-8 gap-2 bg-background shadow-xl border-2 border-primary/20"
+        >
+          <X className="h-3.5 w-3.5" />
+          Close
+        </Button>
+      )}
     </div>
   );
+
+  return mounted ? createPortal(buttons, document.body) : null;
 }
 
-function MarkdownDisplay({ content }: { content: unknown }) {
+function MarkdownDisplay({ content, onClose }: { content: unknown; onClose?: () => void }) {
   const text = String(content);
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <ActionButtons content={text} filename="output" format="md" />
-      </div>
-      <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border border-border/50 bg-surface/50 p-6">
-      <ReactMarkdown
+    <>
+      <FloatingActionButtons content={text} filename="output" format="md" onClose={onClose} />
+      <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border border-border/50 bg-surface/50 p-6 pt-16">
+        <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, rehypeSanitize]}
         components={{
@@ -211,26 +304,24 @@ function MarkdownDisplay({ content }: { content: unknown }) {
         {text}
       </ReactMarkdown>
       </div>
-    </div>
+    </>
   );
 }
 
-function TextDisplay({ content }: { content: unknown }) {
+function TextDisplay({ content, onClose }: { content: unknown; onClose?: () => void }) {
   const text = String(content);
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <ActionButtons content={text} filename="output" format="txt" />
-      </div>
-      <div className="rounded-lg border border-border/50 bg-surface/50 p-4">
+    <>
+      <FloatingActionButtons content={text} filename="output" format="txt" onClose={onClose} />
+      <div className="rounded-lg border border-border/50 bg-surface/50 p-4 pt-16">
         <div className="text-sm whitespace-pre-wrap break-words">{text}</div>
       </div>
-    </div>
+    </>
   );
 }
 
-function ListDisplay({ data }: { data: unknown }) {
+function ListDisplay({ data, onClose }: { data: unknown; onClose?: () => void }) {
   if (!Array.isArray(data)) {
     return <div className="text-sm text-muted-foreground">Invalid list data</div>;
   }
@@ -238,11 +329,9 @@ function ListDisplay({ data }: { data: unknown }) {
   const text = data.map((item) => String(item)).join('\n');
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <ActionButtons content={text} filename="list-output" format="txt" />
-      </div>
-      <div className="rounded-lg border border-border/50 bg-surface/50 p-4">
+    <>
+      <FloatingActionButtons content={text} filename="list-output" format="txt" onClose={onClose} />
+      <div className="rounded-lg border border-border/50 bg-surface/50 p-4 pt-16">
         <ul className="space-y-2 list-disc list-inside">
           {data.map((item, idx) => (
             <li key={idx} className="text-sm">
@@ -251,51 +340,52 @@ function ListDisplay({ data }: { data: unknown }) {
           ))}
         </ul>
       </div>
-    </div>
+    </>
   );
 }
 
-function JSONDisplay({ data }: { data: unknown }) {
-  const jsonString =
-    typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+function JSONDisplay({ data, onClose }: { data: unknown; onClose?: () => void }) {
+  // Parse data if it's a string
+  let jsonData: unknown = data;
+  if (typeof data === 'string') {
+    try {
+      jsonData = JSON.parse(data);
+    } catch {
+      jsonData = data;
+    }
+  }
 
-  // Syntax highlighting for JSON with proper color scheme
-  const highlightJSON = (json: string) => {
-    // Apply replacements in correct order to avoid conflicts
-    return json
-      // First: Match keys (strings followed by colon)
-      .replace(/"([^"]+)"(\s*):/g, (match, key, space) => {
-        return `<span style="color: #60a5fa;">"${key}"</span>${space}:`;
-      })
-      // Second: Match string values (strings not followed by colon)
-      .replace(/"([^"]+)"(?!\s*:)/g, (match, value) => {
-        return `<span style="color: #34d399;">"${value}"</span>`;
-      })
-      // Third: Match numbers
-      .replace(/:\s*(-?\d+\.?\d*)/g, (match, num) => {
-        return `: <span style="color: #fb923c;">${num}</span>`;
-      })
-      // Fourth: Match booleans
-      .replace(/\b(true|false)\b/g, '<span style="color: #c084fc;">$1</span>')
-      // Fifth: Match null
-      .replace(/\b(null)\b/g, '<span style="color: #94a3b8;">$1</span>')
-      // Sixth: Highlight brackets and braces
-      .replace(/([{}[\]])/g, '<span style="color: #e2e8f0;">$1</span>');
-  };
+  // Ensure jsonData is a valid object or array for ReactJson
+  const isValidJson = jsonData !== null &&
+                      jsonData !== undefined &&
+                      typeof jsonData === 'object';
+
+  const jsonString = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <ActionButtons content={jsonString} filename="output" format="json" />
-      </div>
-      <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
-        <pre className="text-sm overflow-y-auto max-h-[70vh] font-mono whitespace-pre-wrap break-words">
-          <code
-            className="text-foreground"
-            dangerouslySetInnerHTML={{ __html: highlightJSON(jsonString) }}
+    <>
+      <FloatingActionButtons content={jsonString} filename="output" format="json" onClose={onClose} />
+      <div className="rounded-lg border border-border/50 bg-muted/20 p-4 pt-16 overflow-y-auto max-h-[70vh] scrollbar-none">
+        {isValidJson ? (
+          <ReactJson
+            src={jsonData as object}
+            theme="monokai"
+            iconStyle="circle"
+            displayDataTypes={false}
+            displayObjectSize={false}
+            enableClipboard={true}
+            collapsed={2}
+            style={{
+              backgroundColor: 'transparent',
+              fontSize: '0.875rem',
+            }}
           />
-        </pre>
+        ) : (
+          <pre className="text-sm font-mono text-foreground whitespace-pre-wrap">
+            {jsonString}
+          </pre>
+        )}
       </div>
-    </div>
+    </>
   );
 }

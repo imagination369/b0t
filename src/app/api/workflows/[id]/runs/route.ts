@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
-import { workflowRunsTable } from '@/lib/schema';
+import { workflowRunsTable, workflowsTable } from '@/lib/schema';
 import { eq, desc } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
@@ -23,12 +23,31 @@ export async function GET(
 
   const { id } = await context.params;
 
-  // Get limit and offset from query params
-  const url = new URL(request.url);
-  const limit = parseInt(url.searchParams.get('limit') || '10', 10);
-  const offset = parseInt(url.searchParams.get('offset') || '0', 10);
-
   try {
+    // First verify the workflow belongs to this user
+    const workflow = await db
+      .select({ userId: workflowsTable.userId })
+      .from(workflowsTable)
+      .where(eq(workflowsTable.id, id))
+      .limit(1);
+
+    if (workflow.length === 0) {
+      return NextResponse.json({ error: 'Workflow not found' }, { status: 404 });
+    }
+
+    if (workflow[0].userId !== session.user.id) {
+      logger.warn(
+        { workflowId: id, userId: session.user.id, ownerId: workflow[0].userId },
+        'Unauthorized access attempt to workflow runs'
+      );
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    // Get limit and offset from query params
+    const url = new URL(request.url);
+    const limit = parseInt(url.searchParams.get('limit') || '10', 10);
+    const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+
     // Get runs for this workflow
     const runs = await db
       .select({

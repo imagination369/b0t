@@ -12,40 +12,9 @@
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { type WorkflowExport } from '../src/lib/workflows/import-export';
 
-const API_URL = process.env.API_URL || 'http://localhost:3000';
-
-interface WorkflowExport {
-  version: string;
-  name: string;
-  description: string;
-  trigger?: {
-    type: 'manual' | 'cron' | 'webhook' | 'telegram' | 'discord' | 'chat';
-    config: Record<string, unknown>;
-  };
-  config: {
-    steps: Array<{
-      id: string;
-      module: string;
-      inputs: Record<string, unknown>;
-      outputAs?: string;
-    }>;
-    outputDisplay?: {
-      type: 'table' | 'list' | 'text' | 'markdown' | 'json' | 'image' | 'images';
-      columns?: Array<{
-        key: string;
-        label: string;
-        type?: 'text' | 'link' | 'date' | 'number' | 'image';
-      }>;
-    };
-  };
-  metadata?: {
-    author?: string;
-    tags?: string[];
-    category?: string;
-    requiresCredentials?: string[];
-  };
-}
+const API_URL = process.env.API_URL || 'http://localhost:3123';
 
 async function importWorkflow(workflowJson: string): Promise<void> {
   try {
@@ -110,7 +79,7 @@ Options:
   --help     Show this help message
 
 Environment:
-  API_URL    API base URL (default: http://localhost:3000)
+  API_URL    API base URL (default: http://localhost:3123)
   `);
   process.exit(0);
 }

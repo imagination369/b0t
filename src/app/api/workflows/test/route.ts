@@ -7,8 +7,17 @@ export const dynamic = 'force-dynamic';
 /**
  * POST /api/workflows/test
  * Run comprehensive test suite for workflow system
+ * SECURITY: Only available in development mode
  */
 export async function POST() {
+  // Only allow in development
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json(
+      { error: 'Test endpoint not available in production' },
+      { status: 403 }
+    );
+  }
+
   try {
     const results = await runAllTests();
 

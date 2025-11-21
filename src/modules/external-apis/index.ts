@@ -10,3 +10,4 @@
  */
 
 export * from './rapidapi';
+export * as hackernews from './hackernews';

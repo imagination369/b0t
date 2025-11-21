@@ -79,6 +79,8 @@ async function listWorkflows(options: ListOptions = {}): Promise<void> {
     console.log(`   npx tsx scripts/export-workflow.ts <id>`);
     console.log(`   npx tsx scripts/update-workflow.ts <id> --status active`);
     console.log(`   npx tsx scripts/clone-workflow.ts <id> --name "New Name"`);
+
+    process.exit(0);
   } catch (error) {
     console.error('❌ Failed to list workflows:', error);
     process.exit(1);

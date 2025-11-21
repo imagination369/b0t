@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { storeCredential, listCredentials } from '@/lib/workflows/credentials';
 import { logger } from '@/lib/logger';
 import { createCredentialSchema } from '@/lib/validations';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,10 @@ export const dynamic = 'force-dynamic';
  *   - organizationId: Filter by organization/client
  */
 export async function GET(request: NextRequest) {
+  // Apply rate limiting
+  const rateLimitResult = await checkRateLimit(request);
+  if (rateLimitResult) return rateLimitResult;
+
   try {
     const session = await auth();
 
@@ -38,9 +43,13 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/credentials
- * Store a new credential
+ * Store a new credential (rate limited to prevent abuse)
  */
 export async function POST(request: NextRequest) {
+  // Apply rate limiting (storing credentials is sensitive)
+  const rateLimitResult = await checkRateLimit(request);
+  if (rateLimitResult) return rateLimitResult;
+
   try {
     const session = await auth();
 

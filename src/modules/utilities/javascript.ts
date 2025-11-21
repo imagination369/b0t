@@ -14,6 +14,11 @@ import Bottleneck from 'bottleneck';
 import CircuitBreaker from 'opossum';
 import { logger } from '@/lib/logger';
 import * as vm from 'vm';
+import { Worker } from 'worker_threads';
+import { promisify } from 'util';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
 
 const limiter = new Bottleneck({
   minTime: 100,
@@ -86,7 +91,14 @@ export async function execute(options: {
       return result;
     } catch (error: any) {
       logger.error({ error: error.message, stack: error.stack }, 'Custom JavaScript execution failed');
-      throw new Error(`JavaScript execution error: ${error.message}`);
+
+      // Provide helpful error messages for common issues
+      let errorMessage = `JavaScript execution error: ${error.message}`;
+      if (error.message.includes('await is only valid in async')) {
+        errorMessage += '\n\nHint: The standard execute() function does not support async/await. Use utilities.javascript.executeAsync instead for async operations.';
+      }
+
+      throw new Error(errorMessage);
     }
   };
 
@@ -257,7 +269,7 @@ export async function mapArray(options: {
 
       const script = new vm.Script(wrappedCode, { filename: `map-${i}.js` });
       const context_vm = vm.createContext(sandbox);
-      const result = script.runInContext(context_vm, { timeout: timeout / items.length, displayErrors: true });
+      const result = script.runInContext(context_vm, { timeout: Math.floor(timeout / items.length), displayErrors: true });
       results.push(result);
     }
 
@@ -286,7 +298,7 @@ export async function filterArray(options: {
       const wrappedCode = `(function() { 'use strict'; ${code} })()`;
       const script = new vm.Script(wrappedCode, { filename: `filter-${i}.js` });
       const context_vm = vm.createContext(sandbox);
-      const shouldInclude = script.runInContext(context_vm, { timeout: timeout / items.length, displayErrors: true });
+      const shouldInclude = script.runInContext(context_vm, { timeout: Math.floor(timeout / items.length), displayErrors: true });
       if (shouldInclude) results.push(items[i]);
     }
 
@@ -316,12 +328,120 @@ export async function reduceArray(options: {
       const wrappedCode = `(function() { 'use strict'; ${code} })()`;
       const script = new vm.Script(wrappedCode, { filename: `reduce-${i}.js` });
       const context_vm = vm.createContext(sandbox);
-      accumulator = script.runInContext(context_vm, { timeout: timeout / items.length, displayErrors: true });
+      accumulator = script.runInContext(context_vm, { timeout: Math.floor(timeout / items.length), displayErrors: true });
     }
 
     return accumulator;
   };
 
   const breaker = new CircuitBreaker(operation, breakerOptions);
+  return limiter.schedule(() => breaker.fire());
+}
+
+/**
+ * Execute async JavaScript code in a worker thread
+ * Supports async/await, fetch, and other async operations
+ */
+export async function executeAsync(options: {
+  code: string;
+  context?: Record<string, any>;
+  timeout?: number;
+}): Promise<any> {
+  const { code, context = {}, timeout = 30000 } = options;
+
+  const operation = async () => {
+    logger.info('Executing async JavaScript', {
+      codeLength: code.length,
+      contextKeys: Object.keys(context),
+      timeout,
+    });
+
+    return new Promise((resolve, reject) => {
+      const workerCode = `
+        const { parentPort, workerData } = require('worker_threads');
+
+        (async () => {
+          try {
+            const context = workerData.context;
+            const input = context.input || context;
+
+            // Make context variables available globally
+            Object.assign(global, context);
+
+            // User's code
+            const result = await (async function() {
+              ${code}
+            })();
+
+            parentPort.postMessage({ success: true, result });
+          } catch (error) {
+            parentPort.postMessage({
+              success: false,
+              error: error.message,
+              stack: error.stack
+            });
+          }
+        })();
+      `;
+
+      const tmpDir = os.tmpdir();
+      const workerFile = path.join(tmpDir, `worker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.js`);
+
+      try {
+        fs.writeFileSync(workerFile, workerCode);
+
+        const worker = new Worker(workerFile, {
+          workerData: { context },
+          eval: false,
+        });
+
+        const timer = setTimeout(() => {
+          worker.terminate();
+          cleanup();
+          reject(new Error(`Async JavaScript execution timeout after ${timeout}ms`));
+        }, timeout);
+
+        const cleanup = () => {
+          clearTimeout(timer);
+          try {
+            fs.unlinkSync(workerFile);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        };
+
+        worker.on('message', (message) => {
+          cleanup();
+          worker.terminate();
+
+          if (message.success) {
+            logger.info('Async JavaScript executed successfully');
+            resolve(message.result);
+          } else {
+            logger.error({ error: message.error, stack: message.stack }, 'Async JavaScript execution failed');
+            reject(new Error(`Async JavaScript execution error: ${message.error}`));
+          }
+        });
+
+        worker.on('error', (error) => {
+          cleanup();
+          logger.error({ error: error.message }, 'Worker thread error');
+          reject(new Error(`Worker thread error: ${error.message}`));
+        });
+
+        worker.on('exit', (code) => {
+          if (code !== 0) {
+            cleanup();
+            reject(new Error(`Worker stopped with exit code ${code}`));
+          }
+        });
+      } catch (error: any) {
+        logger.error({ error: error.message }, 'Failed to create worker');
+        reject(new Error(`Failed to create worker: ${error.message}`));
+      }
+    });
+  };
+
+  const breaker = new CircuitBreaker(operation, { ...breakerOptions, timeout: timeout + 5000 });
   return limiter.schedule(() => breaker.fire());
 }

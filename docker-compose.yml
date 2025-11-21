@@ -2,15 +2,15 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
-    container_name: social-cat-postgres
+    container_name: b0t-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: social_cat_dev
+      POSTGRES_DB: b0t_dev
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,16 +19,16 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - social-cat-network
+      - b0t-network
 
   # Redis (for BullMQ queue and caching)
   redis:
     image: redis:7-alpine
-    container_name: social-cat-redis
+    container_name: b0t-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -37,12 +37,12 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - social-cat-network
+      - b0t-network
 
   # Redis Commander (Optional - Redis GUI)
   redis-commander:
     image: rediscommander/redis-commander:latest
-    container_name: social-cat-redis-commander
+    container_name: b0t-redis-commander
     restart: unless-stopped
     environment:
       REDIS_HOSTS: local:redis:6379
@@ -51,17 +51,17 @@ services:
     depends_on:
       - redis
     networks:
-      - social-cat-network
+      - b0t-network
     profiles:
       - debug  # Only runs with: docker compose --profile debug up
 
   # pgAdmin (Optional - PostgreSQL GUI)
   pgadmin:
     image: dpage/pgadmin4:latest
-    container_name: social-cat-pgadmin
+    container_name: b0t-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@social-cat.dev
+      PGADMIN_DEFAULT_EMAIL: admin@b0t.dev
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
@@ -71,7 +71,7 @@ services:
     depends_on:
       - postgres
     networks:
-      - social-cat-network
+      - b0t-network
     profiles:
       - debug  # Only runs with: docker compose --profile debug up
 
@@ -84,5 +84,5 @@ volumes:
     driver: local
 
 networks:
-  social-cat-network:
+  b0t-network:
     driver: bridge

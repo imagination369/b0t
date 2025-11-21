@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -13,20 +13,25 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, ChevronDown } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronsUpDown, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { CronTriggerConfig } from './trigger-configs/cron-trigger-config';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { getModelIdsByProvider, getDefaultModel, fetchOpenRouterModels, type AIProvider } from '@/lib/ai-models';
+import { logger } from '@/lib/logger';
 
 interface WorkflowSettingsDialogProps {
   workflowId: string;
   workflowName: string;
   workflowConfig: Record<string, unknown>;
   workflowTrigger: {
-    type: 'manual' | 'cron' | 'webhook' | 'telegram' | 'discord' | 'chat';
+    type: 'manual' | 'cron' | 'webhook' | 'telegram' | 'discord' | 'chat' | 'chat-input' | 'gmail' | 'outlook';
     config: Record<string, unknown>;
   };
   open: boolean;
@@ -69,10 +74,22 @@ export function WorkflowSettingsDialog({
   const [triggerSettings, setTriggerSettings] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
+  const [initialized, setInitialized] = useState(false);
+  const [selectOpenStates, setSelectOpenStates] = useState<Record<string, boolean>>({});
+  const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
+
+  // Fetch OpenRouter models when dialog opens
+  useEffect(() => {
+    if (open) {
+      fetchOpenRouterModels().then((models) => {
+        setOpenRouterModels(models.map((m) => m.id));
+      });
+    }
+  }, [open]);
 
   // Extract configurable steps from workflow config
   useEffect(() => {
-    if (open && workflowConfig) {
+    if (open && !initialized) {
       const steps = extractConfigurableSteps(workflowConfig);
       setConfigurableSteps(steps);
 
@@ -88,18 +105,23 @@ export function WorkflowSettingsDialog({
         // Auto-open first step
         initialOpenState[stepKey] = index === 0;
       });
+
+      // Auto-open trigger section if it has configurable fields
+      if (workflowTrigger.type !== 'manual') {
+        initialOpenState['trigger'] = steps.length === 0; // Open if no other steps
+      }
+
       setStepSettings(initialSettings);
       setOpenSteps(initialOpenState);
 
       // Initialize trigger settings
       setTriggerSettings(workflowTrigger.config || {});
-      // Auto-open trigger section if it has configurable fields
-      if (workflowTrigger.type !== 'manual') {
-        initialOpenState['trigger'] = steps.length === 0; // Open if no other steps
-      }
-      setOpenSteps(initialOpenState);
+      setInitialized(true);
+    } else if (!open) {
+      // Reset initialization when dialog closes
+      setInitialized(false);
     }
-  }, [open, workflowConfig, workflowTrigger]);
+  }, [open, initialized, workflowConfig, workflowTrigger]);
 
   const handleSave = async () => {
     try {
@@ -128,7 +150,7 @@ export function WorkflowSettingsDialog({
         onOpenChange(false);
       }
     } catch (error) {
-      console.error('Error saving workflow settings:', error);
+      logger.error({ error }, 'Error saving workflow settings');
       toast.error('Error saving workflow settings');
     } finally {
       setSaving(false);
@@ -136,13 +158,23 @@ export function WorkflowSettingsDialog({
   };
 
   const updateStepSetting = (stepKey: string, fieldKey: string, value: unknown) => {
-    setStepSettings((prev) => ({
-      ...prev,
-      [stepKey]: {
-        ...prev[stepKey],
-        [fieldKey]: value,
-      },
-    }));
+    setStepSettings((prev) => {
+      const newSettings = {
+        ...prev,
+        [stepKey]: {
+          ...prev[stepKey],
+          [fieldKey]: value,
+        },
+      };
+
+      // If provider changed, reset model to default for new provider
+      if (fieldKey === 'provider') {
+        const defaultModel = getDefaultModel(value as AIProvider);
+        newSettings[stepKey]['model'] = defaultModel;
+      }
+
+      return newSettings;
+    });
   };
 
   const updateTriggerSetting = (fieldKey: string, value: unknown) => {
@@ -151,6 +183,13 @@ export function WorkflowSettingsDialog({
       [fieldKey]: value,
     }));
   };
+
+  const handleCronConfigChange = useCallback((config: Record<string, unknown>) => {
+    setTriggerSettings((prev) => ({
+      ...prev,
+      ...config,
+    }));
+  }, []);
 
   const toggleStep = (stepKey: string) => {
     setOpenSteps((prev) => ({
@@ -273,16 +312,22 @@ export function WorkflowSettingsDialog({
               min={field.min}
               max={field.max}
               step={field.step}
-              value={(value as number) ?? ''}
-              onChange={(e) =>
-                updateStepSetting(
-                  stepKey,
-                  field.key,
-                  field.step && field.step < 1
-                    ? parseFloat(e.target.value)
-                    : parseInt(e.target.value)
-                )
-              }
+              value={value === null || value === undefined ? '' : (value as number)}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '') {
+                  // Allow clearing the field
+                  updateStepSetting(stepKey, field.key, null);
+                } else {
+                  updateStepSetting(
+                    stepKey,
+                    field.key,
+                    field.step && field.step < 1
+                      ? parseFloat(val)
+                      : parseInt(val)
+                  );
+                }
+              }}
               placeholder={field.placeholder}
               className="text-sm bg-background text-foreground"
             />
@@ -293,23 +338,65 @@ export function WorkflowSettingsDialog({
         );
 
       case 'select':
+        const selectKey = `${stepKey}-${field.key}`;
+        const isSelectOpen = selectOpenStates[selectKey] || false;
+
+        // For model field, dynamically get options based on current provider
+        let selectOptions = field.options || [];
+        if (field.key === 'model') {
+          const currentProvider = (stepSettings[stepKey]?.['provider'] as string) || 'openai';
+          if (currentProvider === 'openrouter') {
+            selectOptions = openRouterModels;
+          } else {
+            selectOptions = getModelsForProvider(currentProvider);
+          }
+        }
+
         return (
           <div key={field.key} className="bg-muted/50 rounded-lg p-3 border border-border/50 space-y-2">
             <Label htmlFor={`${stepKey}-${field.key}`} className="text-sm font-medium">
               {field.label}
             </Label>
-            <select
-              id={`${stepKey}-${field.key}`}
-              value={(value as string) || ''}
-              onChange={(e) => updateStepSetting(stepKey, field.key, e.target.value)}
-              className="flex h-9 w-full rounded-md border border-input bg-background text-foreground px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              {field.options?.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+            <Popover open={isSelectOpen} onOpenChange={(open) => setSelectOpenStates(prev => ({ ...prev, [selectKey]: open }))} modal={true}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={isSelectOpen}
+                  className="w-full justify-between font-normal h-9 text-sm"
+                >
+                  {(value as string) || selectOptions[0] || 'Select...'}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-full p-0" align="start" style={{ width: 'var(--radix-popover-trigger-width)' }}>
+                <Command loop>
+                  <CommandInput
+                    placeholder={field.key === 'model' ? 'Search models...' : 'Search...'}
+                    className="h-9"
+                  />
+                  <CommandList className="max-h-[300px]">
+                    <CommandEmpty>No {field.key} found.</CommandEmpty>
+                    <CommandGroup>
+                      {selectOptions.map((option) => (
+                        <CommandItem
+                          key={option}
+                          value={option}
+                          onSelect={() => {
+                            updateStepSetting(stepKey, field.key, option);
+                            setSelectOpenStates(prev => ({ ...prev, [selectKey]: false }));
+                          }}
+                          className="text-sm"
+                        >
+                          <Check className={`mr-2 h-4 w-4 ${value === option ? 'opacity-100' : 'opacity-0'}`} />
+                          {option}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
             {field.description && (
               <p className="text-xs text-muted-foreground">{field.description}</p>
             )}
@@ -373,8 +460,15 @@ export function WorkflowSettingsDialog({
                     />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="pt-3 px-1 space-y-3">
-                    {getTriggerFields(workflowTrigger.type, workflowTrigger.config).map((field) =>
-                      renderTriggerField(field)
+                    {workflowTrigger.type === 'cron' ? (
+                      <CronTriggerConfig
+                        initialConfig={triggerSettings}
+                        onConfigChange={handleCronConfigChange}
+                      />
+                    ) : (
+                      getTriggerFields(workflowTrigger.type, workflowTrigger.config).map((field) =>
+                        renderTriggerField(field)
+                      )
                     )}
                   </CollapsibleContent>
                 </Collapsible>
@@ -430,6 +524,14 @@ export function WorkflowSettingsDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * Get available models for a given AI provider
+ * Uses centralized AI models configuration
+ */
+function getModelsForProvider(provider: string): string[] {
+  return getModelIdsByProvider(provider as AIProvider);
 }
 
 /**
@@ -550,79 +652,91 @@ function getConfigurableFields(
 
   // AI modules (ai.ai-sdk, ai.openai, ai.anthropic, ai.openai-workflow)
   if (modulePath.startsWith('ai.') || modulePath.toLowerCase().includes('openai') || modulePath.toLowerCase().includes('anthropic')) {
+    // Check if inputs are nested under 'options' (common pattern for AI modules)
+    const options = inputs.options as Record<string, unknown> | undefined;
+    const aiInputs = options || inputs;
+
+    // Check if this AI module has meaningful configurable content
+    // We'll show config if: prompt exists (static or dynamic), or system prompt is defined, or model is non-default
+    const hasPrompt = aiInputs.prompt !== undefined;
+    const hasSystemPrompt = aiInputs.systemPrompt !== undefined || aiInputs.system !== undefined;
+    const hasNonDefaultModel = aiInputs.model !== undefined && aiInputs.model !== 'gpt-4o-mini';
+    const hasTemperature = aiInputs.temperature !== undefined;
+
+    // If this AI step has no configurable context (no prompt, no system, default model only), skip it
+    if (!hasPrompt && !hasSystemPrompt && !hasNonDefaultModel && !hasTemperature) {
+      return fields;
+    }
+
     // Provider selection (for ai-sdk module only, not legacy modules)
     if (modulePath.includes('ai-sdk')) {
       fields.push({
         key: 'provider',
         label: 'AI Provider',
         type: 'select',
-        value: inputs.provider || 'openai',
-        options: ['openai', 'anthropic'],
-        description: 'Choose between OpenAI (GPT) or Anthropic (Claude)',
+        value: aiInputs.provider || 'openai',
+        options: ['openai', 'anthropic', 'openrouter'],
+        description: 'OpenAI (GPT), Anthropic (Claude), or OpenRouter (hundreds of models)',
       });
     }
 
-    // System prompt (if present in inputs or always show for AI modules)
-    if (inputs.systemPrompt !== undefined || modulePath.startsWith('ai.')) {
-      fields.push({
-        key: 'systemPrompt',
-        label: 'System Prompt',
-        type: 'textarea',
-        value: inputs.systemPrompt || '',
-        placeholder: 'You are a helpful AI assistant...',
-        description: 'Instructions that guide the AI behavior and responses',
-      });
-    }
+    // System prompt - always show for AI modules so users can add instructions
+    fields.push({
+      key: 'systemPrompt',
+      label: 'System Prompt',
+      type: 'textarea',
+      value: aiInputs.systemPrompt || aiInputs.system || '',
+      placeholder: 'You are a helpful AI assistant...',
+      description: 'Instructions that guide the AI behavior and responses. This will override any system prompt in the workflow.',
+    });
 
-    // Model selection (if present in inputs or always show for AI modules)
-    if (inputs.model !== undefined || modulePath.startsWith('ai.')) {
-      fields.push({
-        key: 'model',
-        label: 'Model',
-        type: 'text',
-        value: inputs.model || 'gpt-4o-mini',
-        placeholder: 'gpt-4o, gpt-4o-mini, claude-3-5-sonnet-20241022, etc.',
-        description: 'AI model to use',
-      });
-    }
+    // Model selection - always show for AI modules as dropdown
+    // Get current provider to determine available models
+    const currentProvider = (aiInputs.provider as string) || 'openai';
+    const availableModels = getModelsForProvider(currentProvider);
 
-    // Temperature (if present in inputs)
-    if (inputs.temperature !== undefined) {
-      fields.push({
-        key: 'temperature',
-        label: 'Temperature',
-        type: 'number',
-        value: inputs.temperature ?? 0.7,
-        min: 0,
-        max: 2,
-        step: 0.1,
-        placeholder: '0.7',
-        description: 'Controls randomness (0 = focused, 2 = creative)',
-      });
-    }
+    fields.push({
+      key: 'model',
+      label: 'Model',
+      type: 'select',
+      value: aiInputs.model || getDefaultModel(currentProvider as AIProvider),
+      options: availableModels,
+      description: 'AI model to use',
+    });
 
-    // Max tokens (if present in inputs)
-    if (inputs.maxTokens !== undefined) {
-      fields.push({
-        key: 'maxTokens',
-        label: 'Max Output Tokens',
-        type: 'number',
-        value: inputs.maxTokens ?? 4096,
-        min: 1,
-        max: 8000,
-        step: 1,
-        placeholder: '4096',
-        description: 'Maximum length of AI response',
-      });
-    }
+    // Temperature (always show for AI modules)
+    fields.push({
+      key: 'temperature',
+      label: 'Temperature',
+      type: 'number',
+      value: aiInputs.temperature ?? 0.7,
+      min: 0,
+      max: 2,
+      step: 0.1,
+      placeholder: '0.7 (leave empty to use model default)',
+      description: 'Controls randomness (0 = focused, 2 = creative). Leave empty for models that don\'t support it.',
+    });
+
+    // Max tokens (always show for AI modules)
+    fields.push({
+      key: 'maxTokens',
+      label: 'Max Output Tokens',
+      type: 'number',
+      value: aiInputs.maxTokens ?? 500,
+      min: 1,
+      max: 16000,
+      step: 1,
+      placeholder: '500 (leave empty to use model default)',
+      description: 'Maximum length of AI response. Leave empty for models that don\'t support it.',
+    });
 
     // Prompt field (for modules that use 'prompt' instead of separate system/user)
-    if (inputs.prompt !== undefined && typeof inputs.prompt === 'string' && !inputs.prompt.includes('{{')) {
+    if (aiInputs.prompt !== undefined && typeof aiInputs.prompt === 'string' && !aiInputs.prompt.includes('{{')) {
       fields.push({
         key: 'prompt',
         label: 'Prompt',
         type: 'textarea',
-        value: inputs.prompt || '',
+        value: aiInputs.prompt || '',
         placeholder: 'Enter your prompt...',
         description: 'The prompt to send to the AI',
       });
@@ -706,10 +820,42 @@ function applyStepSettings(
     if (settings) {
       if (!step.inputs) step.inputs = {};
 
+      // For AI modules, check if inputs are nested under 'options'
+      const isAIModule = step.module.startsWith('ai.') ||
+                         step.module.toLowerCase().includes('openai') ||
+                         step.module.toLowerCase().includes('anthropic');
+      const hasOptionsNesting = isAIModule && step.inputs.options && typeof step.inputs.options === 'object';
+
       // Apply all settings for this step
       Object.entries(settings).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== '') {
-          step.inputs[key] = value;
+        // Allow empty strings for systemPrompt and prompt to enable clearing them
+        const allowEmpty = key === 'systemPrompt' || key === 'prompt';
+
+        // For numeric fields, allow empty to remove the parameter
+        const isNumericField = key === 'temperature' || key === 'maxTokens';
+        const shouldRemove = isNumericField && (value === '' || value === null || value === undefined);
+        const shouldApply = value !== undefined && value !== null && (allowEmpty || value !== '');
+
+        if (shouldRemove) {
+          // Remove the parameter for models that don't support it
+          if (hasOptionsNesting) {
+            delete (step.inputs.options as Record<string, unknown>)[key];
+          } else {
+            delete step.inputs[key];
+          }
+        } else if (shouldApply) {
+          // Special handling for systemPrompt - map to 'system' if that's what's being used
+          const actualKey = key === 'systemPrompt' && hasOptionsNesting ?
+            (step.inputs.options as Record<string, unknown>).system !== undefined ? 'system' : 'systemPrompt'
+            : key;
+
+          if (hasOptionsNesting) {
+            // Set nested in options for AI modules with that structure
+            (step.inputs.options as Record<string, unknown>)[actualKey] = value;
+          } else {
+            // Set at top level for other modules
+            step.inputs[actualKey] = value;
+          }
         }
       });
     }

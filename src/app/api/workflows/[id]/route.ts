@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { workflowsTable } from '@/lib/schema';
 import { eq, and } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
+import { workflowScheduler } from '@/lib/workflows/workflow-scheduler';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,33 +86,61 @@ export async function PATCH(
           )
         );
 
+      // Refresh scheduler to pick up status changes for cron/email triggers
+      await workflowScheduler.refresh();
+
       logger.info(
         {
           userId: session.user.id,
           workflowId: id,
           status: body.status,
         },
-        'Workflow status updated'
+        'Workflow status updated and scheduler refreshed'
       );
 
       return NextResponse.json({ success: true, status: body.status });
     }
 
-    // Update trigger config
-    if (body.trigger) {
-      const updatedTrigger = {
-        ...workflow.trigger,
-        config: {
-          ...(workflow.trigger as { type: string; config: Record<string, unknown> }).config,
-          ...body.trigger.config,
-        },
-      };
+    // Update workflow config and/or trigger
+    if (body.config !== undefined || body.trigger !== undefined) {
+      const updates: Record<string, unknown> = {};
+
+      // Update workflow config (step settings like system prompts)
+      if (body.config !== undefined) {
+        updates.config = body.config as {
+          steps: Array<{
+            id: string;
+            module: string;
+            inputs: Record<string, unknown>;
+            outputAs?: string;
+          }>;
+          returnValue?: string;
+          outputDisplay?: {
+            type: string;
+            columns?: Array<{ key: string; label: string; type?: string }>;
+          };
+        };
+      }
+
+      // Update trigger config
+      if (body.trigger !== undefined) {
+        // Parse trigger from database (may be string or object depending on DB)
+        const existingTrigger = typeof workflow.trigger === 'string'
+          ? JSON.parse(workflow.trigger)
+          : workflow.trigger;
+
+        updates.trigger = {
+          type: existingTrigger.type,
+          config: {
+            ...existingTrigger.config,
+            ...body.trigger.config,
+          },
+        };
+      }
 
       await db
         .update(workflowsTable)
-        .set({
-          trigger: updatedTrigger,
-        })
+        .set(updates)
         .where(
           and(
             eq(workflowsTable.id, id),
@@ -119,23 +148,30 @@ export async function PATCH(
           )
         );
 
+      // Refresh scheduler if trigger was updated (for cron/email triggers)
+      if (body.trigger !== undefined) {
+        await workflowScheduler.refresh();
+      }
+
       logger.info(
         {
           userId: session.user.id,
           workflowId: id,
-          triggerType: updatedTrigger.type,
+          hasConfigUpdate: body.config !== undefined,
+          hasTriggerUpdate: body.trigger !== undefined,
         },
-        'Workflow trigger config updated'
+        'Workflow config/trigger updated'
       );
 
-      return NextResponse.json({ success: true, trigger: updatedTrigger });
+      return NextResponse.json({ success: true, ...updates });
     }
 
     return NextResponse.json({ error: 'No updates provided' }, { status: 400 });
   } catch (error) {
-    logger.error({ error }, 'Failed to update workflow');
+    logger.error({ error }, '❌ PATCH /api/workflows/[id] error');
+    logger.error({ error, stack: error instanceof Error ? error.stack : undefined, message: error instanceof Error ? error.message : String(error) }, 'Failed to update workflow');
     return NextResponse.json(
-      { error: 'Failed to update workflow' },
+      { error: 'Failed to update workflow', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }

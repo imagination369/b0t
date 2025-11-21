@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { TwitterApi } from 'twitter-api-v2';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { oauthStateTable } from '@/lib/schema';
+import { oauthStateTable, userCredentialsTable } from '@/lib/schema';
 import { logger } from '@/lib/logger';
+import { getOAuthAppCredentials } from '@/lib/oauth-credential-helper';
+import { eq } from 'drizzle-orm';
 
 /**
  * Twitter OAuth 2.0 Authorization Endpoint
@@ -28,25 +30,46 @@ export async function GET() {
       );
     }
 
-    // Check if Twitter OAuth 2.0 credentials are configured
-    if (!process.env.TWITTER_CLIENT_ID || !process.env.TWITTER_CLIENT_SECRET) {
-      logger.error('Twitter OAuth 2.0 credentials not configured');
+    // Get Twitter OAuth app credentials from database
+    const [appCred] = await db
+      .select()
+      .from(userCredentialsTable)
+      .where(eq(userCredentialsTable.platform, 'twitter_oauth2_app'))
+      .limit(1);
+
+    if (!appCred) {
+      logger.error('Twitter OAuth app credentials not configured');
       return NextResponse.json(
-        { error: 'Twitter OAuth is not configured. Please contact administrator.' },
+        { error: 'Twitter OAuth app not configured. Please add Twitter OAuth 2.0 App Credentials in the credentials page.' },
+        { status: 500 }
+      );
+    }
+
+    // Extract and decrypt OAuth app credentials
+    let clientId: string;
+    let clientSecret: string;
+    try {
+      const creds = getOAuthAppCredentials(appCred, 'Twitter');
+      clientId = creds.clientId;
+      clientSecret = creds.clientSecret;
+    } catch (error) {
+      logger.error({ error }, 'Failed to get Twitter OAuth app credentials');
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Invalid Twitter OAuth app credentials' },
         { status: 500 }
       );
     }
 
     // Initialize Twitter API client with OAuth 2.0 credentials
     const client = new TwitterApi({
-      clientId: process.env.TWITTER_CLIENT_ID,
-      clientSecret: process.env.TWITTER_CLIENT_SECRET,
+      clientId,
+      clientSecret,
     });
 
     // Generate callback URL
     const callbackUrl = process.env.NEXTAUTH_URL
       ? `${process.env.NEXTAUTH_URL}/api/auth/twitter/callback`
-      : 'http://localhost:3000/api/auth/twitter/callback';
+      : 'http://localhost:3123/api/auth/twitter/callback';
 
     // Generate OAuth 2.0 authorization link with PKCE
     const { url, codeVerifier, state } = client.generateOAuth2AuthLink(

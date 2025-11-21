@@ -79,9 +79,45 @@ export async function POST(request: NextRequest) {
       'Test workflow created'
     );
 
+    // Generate mock trigger data based on trigger type
+    const triggerType = workflow.trigger?.type || 'manual';
+    let mockTriggerData: Record<string, unknown> = {};
+
+    if (triggerType === 'chat') {
+      // Chat trigger needs userMessage
+      const triggerConfig = workflow.trigger?.config as { inputVariable?: string } | undefined;
+      const inputVar = triggerConfig?.inputVariable || 'userMessage';
+      mockTriggerData[inputVar] = 'What is 2 + 2?';
+    } else if (triggerType === 'chat-input') {
+      // Chat-input trigger needs all field values
+      const triggerConfig = workflow.trigger?.config as { fields?: Array<{ key: string; label: string; type: string }> } | undefined;
+      const fields = triggerConfig?.fields || [];
+      for (const field of fields) {
+        if (field.type === 'checkbox') {
+          mockTriggerData[field.key] = true;
+        } else if (field.type === 'number') {
+          mockTriggerData[field.key] = 42;
+        } else {
+          mockTriggerData[field.key] = `Test ${field.label}`;
+        }
+      }
+    } else if (triggerType === 'webhook') {
+      mockTriggerData = {
+        body: { test: 'data' },
+        headers: {},
+        query: {}
+      };
+    } else if (triggerType === 'telegram' || triggerType === 'discord') {
+      mockTriggerData = {
+        message: 'Test message',
+        chatId: '12345',
+        userId: '67890'
+      };
+    }
+
     // Execute the workflow
     const startTime = Date.now();
-    const result = await executeWorkflow(workflowId, '1', 'manual');
+    const result = await executeWorkflow(workflowId, '1', triggerType, mockTriggerData);
     const duration = Date.now() - startTime;
 
     // Clean up - delete the test workflow

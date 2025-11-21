@@ -113,11 +113,9 @@ export async function getCredential(
 
   const credential = credentials[0];
 
-  // Update last used timestamp
-  await db
-    .update(userCredentialsTable)
-    .set({ lastUsed: new Date() })
-    .where(eq(userCredentialsTable.id, credential.id));
+  // Note: lastUsed timestamp update removed for performance
+  // Credentials are cached, so this was creating unnecessary write load
+  // The lastUsed field is still available for manual tracking if needed
 
   const decryptedValue = decrypt(credential.encryptedValue);
 
@@ -253,6 +251,45 @@ export async function updateCredential(
 }
 
 /**
+ * Update a credential name
+ */
+export async function updateCredentialName(
+  userId: string,
+  credentialId: string,
+  newName: string
+): Promise<void> {
+  logger.info(
+    {
+      userId,
+      credentialId,
+      action: 'credential_name_update_attempt',
+      timestamp: new Date().toISOString()
+    },
+    'Updating credential name'
+  );
+
+  await db
+    .update(userCredentialsTable)
+    .set({ name: newName })
+    .where(
+      and(
+        eq(userCredentialsTable.id, credentialId),
+        eq(userCredentialsTable.userId, userId)
+      )
+    );
+
+  logger.info(
+    {
+      userId,
+      credentialId,
+      action: 'credential_name_updated',
+      timestamp: new Date().toISOString()
+    },
+    'Credential name updated'
+  );
+}
+
+/**
  * Get credential fields (supports both single and multi-field credentials)
  * Returns a Record with field names as keys and decrypted values
  */
@@ -282,21 +319,24 @@ export async function getCredentialFields(
     .limit(1);
 
   if (credentials.length === 0) {
-    logger.warn({ userId, platform }, 'Credential not found');
+    logger.warn({ userId, platform, organizationId }, 'Credential not found');
     return null;
   }
 
   const credential = credentials[0];
 
-  // Update last used timestamp
-  await db
-    .update(userCredentialsTable)
-    .set({ lastUsed: new Date() })
-    .where(eq(userCredentialsTable.id, credential.id));
+  // Note: lastUsed timestamp update removed for performance
+  // Credentials are cached, so this was creating unnecessary write load
+  // The lastUsed field is still available for manual tracking if needed
+
+  // Parse metadata if it's a string (PostgreSQL JSONB can return as string)
+  const metadata = typeof credential.metadata === 'string'
+    ? JSON.parse(credential.metadata)
+    : credential.metadata;
 
   // Check if multi-field credential
-  if (credential.metadata && typeof credential.metadata === 'object' && 'fields' in credential.metadata) {
-    const fields = credential.metadata.fields as Record<string, string>;
+  if (metadata && typeof metadata === 'object' && 'fields' in metadata) {
+    const fields = metadata.fields as Record<string, string>;
     const decryptedFields: Record<string, string> = {};
 
     for (const [key, encryptedValue] of Object.entries(fields)) {

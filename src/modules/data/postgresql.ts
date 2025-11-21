@@ -20,6 +20,25 @@ import { logger } from '@/lib/logger';
 
 const pools = new Map<string, Pool>();
 
+/**
+ * Validate identifier (table/column names) to prevent SQL injection
+ * Only allows alphanumeric characters, underscores, and dots
+ */
+function validateIdentifier(identifier: string): string {
+  if (!/^[a-zA-Z0-9_.]+$/.test(identifier)) {
+    throw new Error(`Invalid identifier: ${identifier}. Only alphanumeric characters, underscores, and dots are allowed.`);
+  }
+  return identifier;
+}
+
+/**
+ * Quote identifier for safe use in SQL
+ */
+function quoteIdentifier(identifier: string): string {
+  validateIdentifier(identifier);
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
 export interface PostgreSQLConnectionOptions {
   host: string;
   port?: number;
@@ -133,21 +152,41 @@ export async function select<T extends QueryResultRow = Record<string, unknown>>
   logger.info({ database: connection.database, table, options }, 'Selecting from PostgreSQL');
 
   try {
-    const columns = options.columns?.join(', ') || '*';
-    let sql = `SELECT ${columns} FROM ${table}`;
+    // Validate and quote table name
+    const quotedTable = quoteIdentifier(table);
+
+    // Validate and quote column names
+    const columns = options.columns
+      ? options.columns.map((col) => quoteIdentifier(col)).join(', ')
+      : '*';
+
+    let sql = `SELECT ${columns} FROM ${quotedTable}`;
     const params: unknown[] = [];
     let paramIndex = 1;
 
-    // WHERE clause
+    // WHERE clause - validate column names
     if (options.where && Object.keys(options.where).length > 0) {
-      const conditions = Object.keys(options.where).map((key) => `${key} = $${paramIndex++}`);
+      const conditions = Object.keys(options.where).map((key) => {
+        const quotedKey = quoteIdentifier(key);
+        return `${quotedKey} = $${paramIndex++}`;
+      });
       sql += ` WHERE ${conditions.join(' AND ')}`;
       params.push(...Object.values(options.where));
     }
 
-    // ORDER BY
+    // ORDER BY - validate column names and direction
     if (options.orderBy) {
-      sql += ` ORDER BY ${options.orderBy}`;
+      // Parse ORDER BY (e.g., "column ASC" or "column1, column2 DESC")
+      const orderParts = options.orderBy.split(',').map((part) => {
+        const tokens = part.trim().split(/\s+/);
+        const column = quoteIdentifier(tokens[0]);
+        const direction = tokens[1]?.toUpperCase();
+        if (direction && !['ASC', 'DESC'].includes(direction)) {
+          throw new Error(`Invalid ORDER BY direction: ${direction}`);
+        }
+        return direction ? `${column} ${direction}` : column;
+      });
+      sql += ` ORDER BY ${orderParts.join(', ')}`;
     }
 
     // LIMIT and OFFSET
@@ -186,13 +225,15 @@ export async function insert<T extends QueryResultRow = Record<string, unknown>>
   logger.info({ database: connection.database, table }, 'Inserting into PostgreSQL');
 
   try {
-    const columns = Object.keys(data).join(', ');
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
+    const columns = Object.keys(data).map((col) => quoteIdentifier(col)).join(', ');
     const placeholders = Object.keys(data)
       .map((_, i) => `$${i + 1}`)
       .join(', ');
     const values = Object.values(data);
 
-    const sql = `INSERT INTO ${table} (${columns}) VALUES (${placeholders}) RETURNING *`;
+    const sql = `INSERT INTO ${quotedTable} (${columns}) VALUES (${placeholders}) RETURNING *`;
 
     const result = await query<T>(connection, sql, values);
 
@@ -238,7 +279,9 @@ export async function insertMany<T extends QueryResultRow = Record<string, unkno
       return [];
     }
 
-    const columns = Object.keys(rows[0]).join(', ');
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
+    const columns = Object.keys(rows[0]).map((col) => quoteIdentifier(col)).join(', ');
     let paramIndex = 1;
 
     const valueSets = rows.map((row) => {
@@ -250,7 +293,7 @@ export async function insertMany<T extends QueryResultRow = Record<string, unkno
 
     const values = rows.flatMap((row) => Object.values(row));
 
-    const sql = `INSERT INTO ${table} (${columns}) VALUES ${valueSets.join(', ')} RETURNING *`;
+    const sql = `INSERT INTO ${quotedTable} (${columns}) VALUES ${valueSets.join(', ')} RETURNING *`;
 
     const result = await query<T>(connection, sql, values);
 
@@ -287,18 +330,20 @@ export async function update<T extends QueryResultRow = Record<string, unknown>>
   logger.info({ database: connection.database, table, where }, 'Updating PostgreSQL rows');
 
   try {
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
     let paramIndex = 1;
 
     const setClause = Object.keys(data)
-      .map((key) => `${key} = $${paramIndex++}`)
+      .map((key) => `${quoteIdentifier(key)} = $${paramIndex++}`)
       .join(', ');
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = $${paramIndex++}`)
+      .map((key) => `${quoteIdentifier(key)} = $${paramIndex++}`)
       .join(' AND ');
 
     const params = [...Object.values(data), ...Object.values(where)];
 
-    const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+    const sql = `UPDATE ${quotedTable} SET ${setClause} WHERE ${whereClause} RETURNING *`;
 
     const result = await query<T>(connection, sql, params);
 
@@ -334,14 +379,16 @@ export async function deleteRows<T extends QueryResultRow = Record<string, unkno
   logger.info({ database: connection.database, table, where }, 'Deleting PostgreSQL rows');
 
   try {
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
     let paramIndex = 1;
 
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = $${paramIndex++}`)
+      .map((key) => `${quoteIdentifier(key)} = $${paramIndex++}`)
       .join(' AND ');
     const params = Object.values(where);
 
-    const sql = `DELETE FROM ${table} WHERE ${whereClause} RETURNING *`;
+    const sql = `DELETE FROM ${quotedTable} WHERE ${whereClause} RETURNING *`;
 
     const result = await query<T>(connection, sql, params);
 
@@ -429,12 +476,17 @@ export async function count(
   logger.info({ database: connection.database, table, where }, 'Counting PostgreSQL rows');
 
   try {
-    let sql = `SELECT COUNT(*) as count FROM ${table}`;
+    // Validate and quote table name
+    const quotedTable = quoteIdentifier(table);
+    let sql = `SELECT COUNT(*) as count FROM ${quotedTable}`;
     const params: unknown[] = [];
 
     if (where && Object.keys(where).length > 0) {
       let paramIndex = 1;
-      const conditions = Object.keys(where).map((key) => `${key} = $${paramIndex++}`);
+      const conditions = Object.keys(where).map((key) => {
+        const quotedKey = quoteIdentifier(key);
+        return `${quotedKey} = $${paramIndex++}`;
+      });
       sql += ` WHERE ${conditions.join(' AND ')}`;
       params.push(...Object.values(where));
     }
@@ -516,14 +568,24 @@ export async function queryJson<T extends QueryResultRow = Record<string, unknow
   );
 
   try {
+    // Validate and quote identifiers
+    const quotedTable = quoteIdentifier(table);
+    const quotedColumn = quoteIdentifier(jsonColumn);
+
+    // Validate jsonPath to prevent injection - only allow safe characters
+    if (!/^[a-zA-Z0-9_.]+$/.test(jsonPath)) {
+      throw new Error(`Invalid JSON path: ${jsonPath}. Only alphanumeric characters, underscores, and dots are allowed.`);
+    }
+
     let sql: string;
     const params: unknown[] = [];
 
     if (value !== undefined) {
-      sql = `SELECT * FROM ${table} WHERE ${jsonColumn}->>'${jsonPath}' = $1`;
+      // Use parameterized query for the value
+      sql = `SELECT * FROM ${quotedTable} WHERE ${quotedColumn}->>'${jsonPath}' = $1`;
       params.push(value);
     } else {
-      sql = `SELECT ${jsonColumn}->>'${jsonPath}' as value FROM ${table}`;
+      sql = `SELECT ${quotedColumn}->>'${jsonPath}' as value FROM ${quotedTable}`;
     }
 
     const result = await query<T>(connection, sql, params);

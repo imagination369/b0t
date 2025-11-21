@@ -122,32 +122,17 @@ print_step "Step 3/7: Configuring Environment Variables"
 
 if [ ! -f .env.local ]; then
     print_warning ".env.local not found - creating from example"
-    cp .env.local.example .env.local
+    cp .env.example .env.local
     print_success ".env.local created"
-
-    echo ""
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}IMPORTANT: You need to configure your API keys!${NC}"
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo "Please add the following to .env.local:"
-    echo ""
-    echo "1. OPENAI_API_KEY - Get from: https://platform.openai.com/api-keys"
-    echo "2. AUTH_SECRET - Generate with: openssl rand -base64 32"
-    echo ""
-    echo -e "${YELLOW}The script will pause here. Press Enter after you've configured these...${NC}"
-    read -p ""
 else
     print_success ".env.local already exists"
 fi
 
+echo ""
+echo "Configuring required secrets..."
+
 # Check if required variables are set
 source .env.local 2>/dev/null || true
-
-if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" == "sk-your-key-here" ]; then
-    print_warning "OPENAI_API_KEY not configured in .env.local"
-    echo "You'll need to add this before the app will work properly"
-fi
 
 if [ -z "$AUTH_SECRET" ] || [ "$AUTH_SECRET" == "your-secret-here" ]; then
     print_warning "AUTH_SECRET not configured - generating one..."
@@ -162,12 +147,30 @@ if [ -z "$AUTH_SECRET" ] || [ "$AUTH_SECRET" == "your-secret-here" ]; then
     print_success "Generated AUTH_SECRET"
 fi
 
+if [ -z "$ENCRYPTION_KEY" ] || [ "$ENCRYPTION_KEY" == "your-encryption-key-here" ]; then
+    print_warning "ENCRYPTION_KEY not configured - generating one..."
+    ENCRYPTION_KEY=$(openssl rand -base64 32)
+
+    # Update .env.local with generated key
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$ENCRYPTION_KEY|" .env.local
+    else
+        sed -i "s|ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$ENCRYPTION_KEY|" .env.local
+    fi
+    print_success "Generated ENCRYPTION_KEY"
+fi
+
+echo ""
+echo "Note: Platform API keys (OpenAI, Twitter, etc.) are managed through"
+echo "the web UI at Settings → Credentials after setup."
+echo ""
+
 # Ensure DATABASE_URL and REDIS_URL are set for Docker
-if ! grep -q "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/social_cat_dev" .env.local; then
+if ! grep -q "DATABASE_URL=postgresql://postgres:postgres@localhost:5434/b0t_dev" .env.local; then
     echo "" >> .env.local
     echo "# Docker Services (auto-configured)" >> .env.local
-    echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/social_cat_dev" >> .env.local
-    echo "REDIS_URL=redis://localhost:6379" >> .env.local
+    echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5434/b0t_dev" >> .env.local
+    echo "REDIS_URL=redis://localhost:6380" >> .env.local
     print_success "Added Docker connection strings to .env.local"
 fi
 
@@ -224,8 +227,10 @@ print_success "Redis is ready"
 # ============================================================================
 print_step "Step 5/7: Setting Up Database Schema"
 
-# Source .env.local to make DATABASE_URL available
-export $(grep -v '^#' .env.local | xargs)
+# Load environment variables from .env.local
+set -a  # automatically export all variables
+source .env.local
+set +a  # stop automatically exporting
 
 echo "Pushing database schema to PostgreSQL..."
 npm run db:push --silent || {
@@ -234,6 +239,11 @@ npm run db:push --silent || {
 }
 print_success "Database schema created"
 
+echo ""
+echo "Seeding admin user..."
+npm run db:seed --silent
+print_success "Admin user created (admin@b0t.dev / admin)"
+
 # ============================================================================
 # STEP 6: Verify Installation
 # ============================================================================
@@ -241,13 +251,13 @@ print_step "Step 6/7: Verifying Installation"
 
 # Check Docker containers
 echo "Checking Docker containers..."
-if docker compose ps | grep -q "postgres.*running"; then
+if docker ps --filter name=b0t-postgres --format "{{.Status}}" | grep -q "Up"; then
     print_success "PostgreSQL container running"
 else
     print_error "PostgreSQL container not running"
 fi
 
-if docker compose ps | grep -q "redis.*running"; then
+if docker ps --filter name=b0t-redis --format "{{.Status}}" | grep -q "Up"; then
     print_success "Redis container running"
 else
     print_error "Redis container not running"
@@ -255,7 +265,7 @@ fi
 
 # Test database connection
 echo "Testing database connection..."
-if docker compose exec -T postgres psql -U postgres -d social_cat_dev -c "SELECT 1" > /dev/null 2>&1; then
+if docker compose exec -T postgres psql -U postgres -d b0t_dev -c "SELECT 1" > /dev/null 2>&1; then
     print_success "Database connection successful"
 else
     print_warning "Database connection test failed"
@@ -280,8 +290,8 @@ echo -e "${GREEN}   Your development environment is ready!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "📊 Services Running:"
-echo "   ✓ PostgreSQL:  localhost:5432"
-echo "   ✓ Redis:       localhost:6379"
+echo "   ✓ PostgreSQL:  localhost:5434 (container internal: 5432)"
+echo "   ✓ Redis:       localhost:6380 (container internal: 6379)"
 echo ""
 echo "🎯 Next Steps:"
 echo ""
@@ -289,7 +299,7 @@ echo "   1. Start the development server:"
 echo -e "      ${BLUE}npm run dev${NC}"
 echo ""
 echo "   2. Open your browser:"
-echo -e "      ${BLUE}http://localhost:3000${NC}"
+echo -e "      ${BLUE}http://localhost:3123${NC}"
 echo ""
 echo "   3. Login with:"
 echo "      Email:    admin@b0t.dev"

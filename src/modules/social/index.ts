@@ -9,6 +9,7 @@
  * - Structured logging
  */
 
-export * from './twitter';
-export * from './instagram';
-export * from './youtube';
+export * as twitter from './twitter';
+export * as instagram from './instagram';
+export * as youtube from './youtube';
+export * as linkedin from './linkedin';

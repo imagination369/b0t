@@ -75,6 +75,42 @@ export async function register() {
     // Initialize workflow queue and scheduler
     const { initializeWorkflowQueue } = await import('./lib/workflows/workflow-queue');
     const { workflowScheduler } = await import('./lib/workflows/workflow-scheduler');
+    const { preloadAllModules } = await import('./lib/workflows/module-preloader');
+    const { preloadCredentialCache } = await import('./lib/workflows/credential-cache');
+
+    // Pre-load all workflow modules (unless explicitly disabled)
+    if (process.env.SKIP_MODULE_PRELOAD !== 'true') {
+      preloadAllModules().then(stats => {
+        // Only log in production or if explicitly requested
+        if (process.env.NODE_ENV !== 'development' || process.env.LOG_PRELOAD === 'true') {
+          logger.info(
+            {
+              totalModules: stats.totalModules,
+              successCount: stats.successCount,
+              failCount: stats.failCount,
+              duration: stats.duration
+            },
+            `✅ Pre-loaded ${stats.successCount} workflow modules in ${stats.duration}ms`
+          );
+        }
+
+        // After modules are loaded, pre-load credentials for active users
+        return preloadCredentialCache(100);
+      }).then(credStats => {
+        if (credStats && (process.env.NODE_ENV !== 'development' || process.env.LOG_PRELOAD === 'true')) {
+          logger.info(
+            {
+              usersPreloaded: credStats.usersPreloaded,
+              errors: credStats.errors,
+              duration: credStats.duration
+            },
+            `✅ Pre-loaded credentials for ${credStats.usersPreloaded} active users in ${credStats.duration}ms`
+          );
+        }
+      }).catch(error => {
+        logger.error({ error }, 'Pre-loading failed (non-fatal)');
+      });
+    }
 
     // Initialize workflow queue
     // Concurrency automatically configured based on environment:
@@ -84,26 +120,28 @@ export async function register() {
     //
     // Note: Queue initialization runs in background, don't await the worker
     initializeWorkflowQueue().then(queueInitialized => {
-      if (queueInitialized) {
-        const concurrency = parseInt(
-          process.env.WORKFLOW_CONCURRENCY ||
-          (process.env.NODE_ENV === 'production' ? '100' : '20'),
-          10
-        );
-        logger.info(
-          { concurrency },
-          '✅ Workflow queue initialized (Redis-backed)'
-        );
-      } else {
-        logger.info('⚠️  Workflow queue disabled (no Redis) - using direct execution');
+      // Only log in production or if explicitly requested
+      if (process.env.NODE_ENV !== 'development' || process.env.LOG_QUEUE === 'true') {
+        if (queueInitialized) {
+          const concurrency = parseInt(
+            process.env.WORKFLOW_CONCURRENCY ||
+            (process.env.NODE_ENV === 'production' ? '100' : '20'),
+            10
+          );
+          logger.info(
+            { concurrency },
+            '✅ Workflow queue initialized (Redis-backed)'
+          );
+        } else {
+          logger.info('⚠️  Workflow queue disabled (no Redis) - using direct execution');
+        }
       }
     }).catch(error => {
       logger.error({ error }, 'Failed to initialize workflow queue');
     });
 
     // Initialize workflow scheduler (for cron triggers)
-    workflowScheduler.initialize().catch(error => {
-      logger.error({ error }, 'Failed to initialize workflow scheduler');
-    });
+    // Error logging handled inside initialize()
+    workflowScheduler.initialize();
   }
 }

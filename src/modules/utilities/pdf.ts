@@ -1,5 +1,8 @@
-import * as pdfParse from 'pdf-parse';
 import { logger } from '@/lib/logger';
+
+// pdf-parse has inconsistent module exports, use dynamic require
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse');
 
 /**
  * PDF Module
@@ -43,9 +46,7 @@ export async function parsePdf(input: Buffer): Promise<PdfParseResult> {
   logger.info({ inputSize: input.length }, 'Parsing PDF');
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pdf = ((pdfParse as any).default || pdfParse) as any;
-    const data = await pdf(input);
+    const data = await pdfParse(input);
 
     logger.info(
       {

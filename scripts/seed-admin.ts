@@ -6,7 +6,7 @@
  * Safe to run multiple times (idempotent).
  *
  * Usage:
- *   npx tsx scripts/seed-admin.ts
+ *   npm run db:seed (uses dotenv-cli to load .env.local)
  */
 
 import bcrypt from 'bcryptjs';
@@ -14,13 +14,11 @@ import { db } from '../src/lib/db';
 import { usersTable } from '../src/lib/schema';
 import { eq } from 'drizzle-orm';
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@socialcat.com';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@b0t.dev';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const ADMIN_USER_ID = '1';
 
 async function seedAdmin() {
-  console.log('🌱 Seeding admin user...');
-
   try {
     // Check if admin user already exists
     const existingUser = await db
@@ -41,16 +39,13 @@ async function seedAdmin() {
         emailVerified: 1,
       });
 
-      console.log('✅ Created admin user:', ADMIN_EMAIL);
+      console.log('✅ Admin user created');
     } else {
-      console.log('ℹ️  Admin user already exists:', ADMIN_EMAIL);
+      console.log('✅ Admin user ready');
     }
 
-    console.log('\n✅ Admin setup complete!');
-    console.log('📧 Email:', ADMIN_EMAIL);
-    console.log('🔑 Password:', ADMIN_PASSWORD);
-    console.log('💡 Admin workflows have organizationId = NULL (not tied to clients)');
-    console.log('\n💡 Login at: http://localhost:3000/auth/signin');
+    console.log(`   Email: ${ADMIN_EMAIL}`);
+    console.log(`   Password: ${ADMIN_PASSWORD}`);
 
     process.exit(0);
   } catch (error) {

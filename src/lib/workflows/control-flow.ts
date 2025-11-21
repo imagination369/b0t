@@ -176,20 +176,34 @@ export async function executeStep(
 ): Promise<unknown> {
   const normalizedStep = normalizeStep(step);
 
-  if (normalizedStep.type === 'condition') {
-    return executeConditionStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
-  }
+  try {
+    if (normalizedStep.type === 'condition') {
+      return await executeConditionStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
+    }
 
-  if (normalizedStep.type === 'forEach') {
-    return executeForEachStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
-  }
+    if (normalizedStep.type === 'forEach') {
+      return await executeForEachStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
+    }
 
-  if (normalizedStep.type === 'while') {
-    return executeWhileStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
-  }
+    if (normalizedStep.type === 'while') {
+      return await executeWhileStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
+    }
 
-  // Action step
-  return executeActionStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
+    // Action step
+    return await executeActionStep(normalizedStep, context, executeModuleFn, resolveVariablesFn);
+  } catch (error) {
+    // Add step context to error message
+    const stepInfo = `Step "${step.id}"${normalizedStep.type === 'action' && 'module' in normalizedStep ? ` (${normalizedStep.module})` : ''}`;
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    logger.error({
+      stepId: step.id,
+      stepType: normalizedStep.type,
+      error: errorMsg,
+    }, `Error in ${stepInfo}`);
+
+    throw new Error(`${stepInfo}: ${errorMsg}`);
+  }
 }
 
 /**
@@ -204,6 +218,60 @@ async function executeActionStep(
   logger.info({ stepId: step.id, module: step.module }, 'Executing action step');
 
   const resolvedInputs = resolveVariablesFn(step.inputs, context.variables);
+
+  // SYSTEM PROMPT OVERRIDE: If this is an AI module and systemPrompt is set in workflow config,
+  // override the resolved inputs with the UI-set system prompt
+  const isAIModule = step.module.startsWith('ai.') ||
+                     step.module.toLowerCase().includes('openai') ||
+                     step.module.toLowerCase().includes('anthropic');
+
+  logger.info(
+    {
+      stepId: step.id,
+      module: step.module,
+      isAIModule,
+      hasContext: !!context,
+      hasConfig: !!context.config,
+      configStepsCount: context.config?.steps?.length || 0
+    },
+    'DEBUG: Checking for system prompt override'
+  );
+
+  if (isAIModule && context.config) {
+    const configStep = context.config.steps.find(s => s.id === step.id);
+
+    // Check for systemPrompt in both flat and nested structures
+    const configOptions = configStep?.inputs?.options as Record<string, unknown> | undefined;
+    const systemPrompt = configOptions?.systemPrompt || configStep?.inputs?.systemPrompt;
+
+    logger.info(
+      {
+        stepId: step.id,
+        foundConfigStep: !!configStep,
+        configStepInputs: configStep?.inputs ? Object.keys(configStep.inputs) : [],
+        hasOptionsNesting: !!configOptions,
+        hasSystemPrompt: !!systemPrompt,
+        systemPromptSource: configOptions?.systemPrompt ? 'options.systemPrompt' :
+                           configStep?.inputs?.systemPrompt ? 'inputs.systemPrompt' : 'none'
+      },
+      'DEBUG: Config step lookup result'
+    );
+
+    if (systemPrompt) {
+      // UI-set system prompt takes absolute priority
+      // Check if inputs are nested under 'options' (common pattern for AI modules)
+      if (resolvedInputs.options && typeof resolvedInputs.options === 'object') {
+        (resolvedInputs.options as Record<string, unknown>).systemPrompt = systemPrompt;
+      } else {
+        resolvedInputs.systemPrompt = systemPrompt;
+      }
+      logger.info(
+        { stepId: step.id, module: step.module, systemPromptLength: String(systemPrompt).length },
+        'Overriding system prompt with UI-configured value'
+      );
+    }
+  }
+
   const output = await executeModuleFn(step.module, resolvedInputs);
 
   if (step.outputAs) {

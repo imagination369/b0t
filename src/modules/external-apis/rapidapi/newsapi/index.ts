@@ -12,11 +12,6 @@ import { logger } from '@/lib/logger';
  */
 
 const BASE_URL = 'https://news-api14.p.rapidapi.com/v2';
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
-
-if (!RAPIDAPI_KEY) {
-  logger.warn('⚠️  RAPIDAPI_KEY is not set. News API features will not work.');
-}
 
 export interface NewsArticle {
   title: string;
@@ -59,14 +54,19 @@ export interface Country {
 /**
  * Get trending news articles
  */
-export async function getTrendingNews(params?: {
+export async function getTrendingNews(params: {
+  apiKey: string; // RapidAPI key
   topic?: string; // e.g., 'technology', 'business', 'ai'
   language?: string; // e.g., 'en', 'es', 'fr'
   country?: string; // e.g., 'us', 'gb', 'de'
   limit?: number; // Max articles to return (default: 10)
   excludeUrls?: string[]; // URLs to exclude (already posted)
 }): Promise<NewsArticle[]> {
-  const { topic, language = 'en', country = 'us', limit = 10, excludeUrls = [] } = params || {};
+  const { apiKey, topic, language = 'en', country = 'us', limit = 10, excludeUrls = [] } = params;
+
+  if (!apiKey) {
+    throw new Error('RapidAPI key is required. Please add your RapidAPI credentials at /settings/credentials');
+  }
 
   logger.info({ topic, language, country, limit, excludeCount: excludeUrls.length }, '📰 Fetching trending news');
 
@@ -79,7 +79,7 @@ export async function getTrendingNews(params?: {
 
   const response = await rapidApiAxios.get<{ success: boolean; data: NewsArticle[] }>(url, {
     headers: {
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'x-rapidapi-host': 'news-api14.p.rapidapi.com',
     },
   });
@@ -106,13 +106,22 @@ export async function getTrendingNews(params?: {
 /**
  * Get full article content
  */
-export async function getArticleContent(articleUrl: string): Promise<{
+export async function getArticleContent(params: {
+  apiKey: string;
+  articleUrl: string;
+}): Promise<{
   title: string;
   content: string;
   url: string;
   authors: string[];
   date: string;
 }> {
+  const { apiKey, articleUrl } = params;
+
+  if (!apiKey) {
+    throw new Error('RapidAPI key is required. Please add your RapidAPI credentials at /settings/credentials');
+  }
+
   logger.info({ articleUrl }, '📄 Fetching article content');
 
   const queryParams = new URLSearchParams({ url: articleUrl });
@@ -129,7 +138,7 @@ export async function getArticleContent(articleUrl: string): Promise<{
     };
   }>(url, {
     headers: {
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'x-rapidapi-host': 'news-api14.p.rapidapi.com',
     },
   });
@@ -143,12 +152,18 @@ export async function getArticleContent(articleUrl: string): Promise<{
  * Get supported topics (with subtopics)
  * This is cached and only needs to be called once
  */
-export async function getSupportedTopics(): Promise<Topic[]> {
+export async function getSupportedTopics(params: { apiKey: string }): Promise<Topic[]> {
+  const { apiKey } = params;
+
+  if (!apiKey) {
+    throw new Error('RapidAPI key is required. Please add your RapidAPI credentials at /settings/credentials');
+  }
+
   const url = `${BASE_URL}/info/topics`;
 
   const response = await rapidApiAxios.get<{ success: boolean; data: Topic[] }>(url, {
     headers: {
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'x-rapidapi-host': 'news-api14.p.rapidapi.com',
     },
   });
@@ -160,12 +175,18 @@ export async function getSupportedTopics(): Promise<Topic[]> {
  * Get supported languages
  * This is cached and only needs to be called once
  */
-export async function getSupportedLanguages(): Promise<Language[]> {
+export async function getSupportedLanguages(params: { apiKey: string }): Promise<Language[]> {
+  const { apiKey } = params;
+
+  if (!apiKey) {
+    throw new Error('RapidAPI key is required. Please add your RapidAPI credentials at /settings/credentials');
+  }
+
   const url = `${BASE_URL}/info/languages`;
 
   const response = await rapidApiAxios.get<{ success: boolean; data: Language[] }>(url, {
     headers: {
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'x-rapidapi-host': 'news-api14.p.rapidapi.com',
     },
   });
@@ -177,12 +198,18 @@ export async function getSupportedLanguages(): Promise<Language[]> {
  * Get supported countries (with their languages)
  * This is cached and only needs to be called once
  */
-export async function getSupportedCountries(): Promise<Country[]> {
+export async function getSupportedCountries(params: { apiKey: string }): Promise<Country[]> {
+  const { apiKey } = params;
+
+  if (!apiKey) {
+    throw new Error('RapidAPI key is required. Please add your RapidAPI credentials at /settings/credentials');
+  }
+
   const url = `${BASE_URL}/info/countries`;
 
   const response = await rapidApiAxios.get<{ success: boolean; data: Country[] }>(url, {
     headers: {
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'x-rapidapi-host': 'news-api14.p.rapidapi.com',
     },
   });
@@ -195,7 +222,8 @@ export async function getSupportedCountries(): Promise<Country[]> {
  * Returns a formatted string with the selected article's details
  * Also returns the selected article for tracking
  */
-export async function getNewsSummaryForAI(params?: {
+export async function getNewsSummaryForAI(params: {
+  apiKey: string;
   topic?: string;
   language?: string;
   country?: string;

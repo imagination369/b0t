@@ -24,12 +24,15 @@
 
 import { initializeWorkflowQueue } from './src/lib/workflows/workflow-queue';
 import { workflowScheduler } from './src/lib/workflows/workflow-scheduler';
+import { preloadAllModules } from './src/lib/workflows/module-preloader';
+import { preloadCredentialCache } from './src/lib/workflows/credential-cache';
 import { logger } from './src/lib/logger';
 import os from 'os';
 
 // Worker configuration
 const workerName = process.env.WORKER_NAME || `worker-${os.hostname()}-${process.pid}`;
 const concurrency = parseInt(process.env.WORKFLOW_CONCURRENCY || '50', 10);
+const skipModulePreload = process.env.SKIP_MODULE_PRELOAD === 'true';
 
 console.log('╔════════════════════════════════════════╗');
 console.log('║   B0T Workflow Worker                  ║');
@@ -51,6 +54,27 @@ async function startWorker() {
     }
 
     logger.info({ workerName, concurrency }, 'Starting workflow worker');
+
+    // Pre-load all modules to eliminate cold start (skippable for faster startup in dev)
+    if (!skipModulePreload) {
+      console.log('🔥 Pre-loading workflow modules...');
+      const preloadStats = await preloadAllModules();
+      console.log(
+        `✅ Pre-loaded ${preloadStats.successCount}/${preloadStats.totalModules} modules in ${preloadStats.duration}ms`
+      );
+      if (preloadStats.failCount > 0) {
+        console.log(`⚠️  ${preloadStats.failCount} modules failed to load`);
+      }
+
+      // Pre-load credentials for active users
+      console.log('🔑 Pre-loading credentials for active users...');
+      const credStats = await preloadCredentialCache(100);
+      console.log(
+        `✅ Pre-loaded credentials for ${credStats.usersPreloaded} users in ${credStats.duration}ms`
+      );
+    } else {
+      console.log('⏭️  Skipping module pre-load (SKIP_MODULE_PRELOAD=true)');
+    }
 
     // Initialize workflow queue (creates worker that processes jobs)
     const queueInitialized = await initializeWorkflowQueue({
@@ -133,6 +157,18 @@ async function startWorker() {
         );
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
+
+      // Close queues, workers, and Redis connections
+      console.log('🔌 Closing queue connections...');
+      const { shutdownQueues } = await import('./src/lib/queue');
+      await shutdownQueues();
+      logger.info({ workerName }, 'Queue connections closed');
+
+      // Close database pool
+      console.log('💾 Closing database connections...');
+      const { pool } = await import('./src/lib/db');
+      await pool.end();
+      logger.info({ workerName }, 'Database pool closed');
 
       logger.info({ workerName }, 'Worker shutdown complete');
       console.log('✅ Worker stopped successfully');

@@ -1,8 +1,9 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { Copy, Download, Check } from 'lucide-react';
-import { useState } from 'react';
+import { Copy, Download, Check, X } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 
 interface Column {
@@ -16,11 +17,19 @@ interface DataTableProps {
   config?: {
     columns?: Column[];
   };
+  onClose?: () => void;
 }
 
-export function DataTable({ data, config }: DataTableProps) {
+export function DataTable({ data, config, onClose }: DataTableProps) {
   // Hook must be at the top before any returns
   const [copied, setCopied] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Ensure component is mounted before using portal
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Handle single object with nested array
   if (!Array.isArray(data) && typeof data === 'object' && data !== null) {
@@ -66,16 +75,82 @@ export function DataTable({ data, config }: DataTableProps) {
   // Handle array of objects
   if (!Array.isArray(data)) {
     return (
-      <div className="rounded-lg border border-border/50 bg-surface/50 p-4">
-        <p className="text-sm text-muted-foreground">
-          Table display requires array data. Use <code className="text-xs bg-muted px-1 py-0.5 rounded">type: &quot;text&quot;</code> or <code className="text-xs bg-muted px-1 py-0.5 rounded">type: &quot;json&quot;</code> for single values.
-        </p>
+      <div className="rounded-lg border border-red-500/50 bg-red-500/5 p-4">
+        <div className="space-y-3">
+          <div>
+            <p className="text-sm font-semibold text-red-600 dark:text-red-400">
+              Type Mismatch: Table Display Error
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Table display requires array data. Received: <code className="bg-muted px-1 py-0.5 rounded">{typeof data}</code>
+            </p>
+          </div>
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground select-none">
+              Technical Details
+            </summary>
+            <div className="mt-2 bg-black/5 dark:bg-white/5 rounded p-3 font-mono space-y-2">
+              <div className="text-muted-foreground">
+                <div className="mb-2 font-semibold">Type Analysis:</div>
+                <div>Expected: Array</div>
+                <div>Received: {typeof data}</div>
+                <div>Display Mode: Table</div>
+              </div>
+              <div className="text-muted-foreground">
+                <div className="mb-2 font-semibold">Data Preview:</div>
+                <pre className="text-[10px] whitespace-pre-wrap break-all">
+{JSON.stringify(data, null, 2).slice(0, 200)}{JSON.stringify(data).length > 200 ? '...(truncated)' : ''}
+                </pre>
+              </div>
+              <div className="text-muted-foreground">
+                <div className="mb-2 font-semibold">Resolution Steps:</div>
+                <div>1. Verify transform step returns array</div>
+                <div>2. Check returnValue extracts correct field</div>
+                <div>3. Use outputDisplay type: &quot;json&quot; for objects</div>
+                <div>4. Review workflow JSON structure</div>
+              </div>
+            </div>
+          </details>
+        </div>
       </div>
     );
   }
 
   if (data.length === 0) {
-    return <div className="text-sm text-muted-foreground">No data to display</div>;
+    return (
+      <div className="rounded-lg border border-yellow-500/50 bg-yellow-500/5 p-4">
+        <div className="space-y-3">
+          <div>
+            <p className="text-sm font-semibold text-yellow-600 dark:text-yellow-400">
+              Empty Result Set
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Workflow executed successfully but returned 0 items.
+            </p>
+          </div>
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground select-none">
+              Technical Details
+            </summary>
+            <div className="mt-2 bg-black/5 dark:bg-white/5 rounded p-3 font-mono space-y-1">
+              <div className="text-muted-foreground">
+                <div className="mb-2 font-semibold">Output Analysis:</div>
+                <div>Type: Array</div>
+                <div>Length: 0</div>
+                <div>Display Mode: Table</div>
+              </div>
+              <div className="text-muted-foreground mt-3">
+                <div className="mb-2 font-semibold">Common Causes:</div>
+                <div>1. API/source returned no matching results</div>
+                <div>2. Query parameters too restrictive (date range, filters)</div>
+                <div>3. Transform/filter step removed all items</div>
+                <div>4. Data source temporarily empty</div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    );
   }
 
   // Infer columns if not provided
@@ -127,38 +202,84 @@ export function DataTable({ data, config }: DataTableProps) {
     toast.success('Downloaded as table-data.csv');
   };
 
+  const floatingButtons = mounted && createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        top: '16px',
+        right: '16px',
+        zIndex: 9998,
+        display: 'flex',
+        gap: '8px',
+        pointerEvents: 'auto',
+        isolation: 'isolate',
+        backfaceVisibility: 'hidden',
+        transform: 'translateZ(0)',
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+      onMouseDown={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+    >
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleCopy();
+        }}
+        className="h-8 gap-2 bg-background shadow-xl border-2 border-primary/20"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? 'Copied' : 'Copy CSV'}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleDownload();
+        }}
+        className="h-8 gap-2 bg-background shadow-xl border-2 border-primary/20"
+      >
+        <Download className="h-3.5 w-3.5" />
+        Download CSV
+      </Button>
+      {onClose && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="h-8 gap-2 bg-background shadow-xl border-2 border-primary/20"
+        >
+          <X className="h-3.5 w-3.5" />
+          Close
+        </Button>
+      )}
+    </div>,
+    document.body
+  );
+
   return (
-    <div className="w-full -mx-6 space-y-3">
-      <div className="flex justify-end px-6">
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleCopy}
-            className="h-8 gap-2"
-          >
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? 'Copied' : 'Copy CSV'}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleDownload}
-            className="h-8 gap-2"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Download CSV
-          </Button>
-        </div>
-      </div>
-      <div className="block max-w-full overflow-x-auto">
+    <>
+      {floatingButtons}
+      {/* Scrollable table container */}
+      <div className="w-full -mx-6 pt-12">
+        <div className="w-full overflow-x-auto px-6" ref={scrollContainerRef}>
         <div className="relative overflow-hidden rounded-lg border-0 bg-gradient-to-br from-primary/5 via-blue-500/3 to-primary/5 backdrop-blur-sm shadow-sm">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary via-blue-400 to-primary opacity-80" />
-          <table className="min-w-full border-collapse mt-1">
-            <thead>
-              <tr className="border-b border-border/50 bg-background/50">
+          <table className="w-full border-collapse mt-1" style={{ tableLayout: 'auto' }}>
+            <thead className="bg-background/95 backdrop-blur-sm">
+              <tr className="border-b border-border/50">
               {columns.map((col) => (
-                <th key={col.key} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide whitespace-nowrap">
+                <th key={col.key} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ minWidth: '150px' }}>
                   {col.label}
                 </th>
               ))}
@@ -168,8 +289,8 @@ export function DataTable({ data, config }: DataTableProps) {
               {data.map((row, idx) => (
                 <tr key={idx} className="border-b border-border/30 last:border-0 hover:bg-gradient-to-r hover:from-primary/5 hover:to-transparent transition-all duration-200">
                 {columns.map((col) => (
-                  <td key={col.key} className="px-4 py-3 text-sm align-top">
-                    <div className="max-w-xs">
+                  <td key={col.key} className="px-4 py-3 text-sm align-top" style={{ minWidth: '150px', maxWidth: '400px' }}>
+                    <div className="break-words overflow-hidden">
                       <CellRenderer value={getNestedValue(row, col.key)} type={col.type} />
                     </div>
                   </td>
@@ -179,8 +300,9 @@ export function DataTable({ data, config }: DataTableProps) {
             </tbody>
           </table>
         </div>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -266,7 +388,6 @@ function inferColumnsFromData(data: unknown[]): Column[] {
   if (typeof firstItem !== 'object' || firstItem === null) return [];
 
   return Object.keys(firstItem)
-    .slice(0, 8)
     .map((key) => ({
       key,
       label: formatLabel(key),

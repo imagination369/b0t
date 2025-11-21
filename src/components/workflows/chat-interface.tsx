@@ -10,11 +10,18 @@ import { Send, User, Bot, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { logger } from '@/lib/logger';
+
+// Animation constants to avoid creating new objects on each render
+const MESSAGE_ANIMATION_INITIAL = { opacity: 0, y: 10 };
+const MESSAGE_ANIMATION_ANIMATE = { opacity: 1, y: 0 };
+const MESSAGE_ANIMATION_TRANSITION = { duration: 0.3, ease: 'easeOut' as const };
 
 interface ChatInterfaceProps {
   workflowId: string;
   workflowName: string;
   workflowDescription?: string;
+  conversationId?: string;
   onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
@@ -22,12 +29,15 @@ export function ChatInterface({
   workflowId,
   workflowName,
   workflowDescription,
+  conversationId: initialConversationId,
   onFullscreenChange,
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [input, setInput] = useState('');
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
 
   const toggleFullscreen = () => {
     const newFullscreen = !isFullscreen;
@@ -35,9 +45,21 @@ export function ChatInterface({
     onFullscreenChange?.(newFullscreen);
   };
 
-  const { messages, sendMessage, status } = useChat({
+  const { messages, setMessages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
       api: `/api/workflows/${workflowId}/chat`,
+      fetch: async (url, options) => {
+        const response = await fetch(url, options);
+
+        // Extract conversation ID from response headers
+        const newConversationId = response.headers.get('X-Conversation-Id');
+
+        if (newConversationId && !conversationId) {
+          setConversationId(newConversationId);
+        }
+
+        return response;
+      },
     }),
     messages: [
       {
@@ -53,6 +75,48 @@ export function ChatInterface({
     ],
   });
 
+  // Load conversation history if conversationId is provided
+  useEffect(() => {
+    if (initialConversationId && !isLoadingHistory) {
+      setIsLoadingHistory(true);
+      fetch(`/api/workflows/${workflowId}/chat?conversationId=${initialConversationId}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.messages && data.messages.length > 0) {
+            // Convert DB messages to AI SDK format
+            const loadedMessages = data.messages.map((msg: { id: string; role: string; content: string }) => ({
+              id: msg.id,
+              role: msg.role,
+              parts: [{
+                type: 'text',
+                text: msg.content,
+              }],
+            }));
+
+            // Prepend welcome message
+            setMessages([
+              {
+                id: 'welcome',
+                role: 'assistant',
+                parts: [{
+                  type: 'text',
+                  text: `Hi! I'm here to help you with **${workflowName}**.\n\n${workflowDescription || 'How can I assist you today?'}`,
+                }],
+              },
+              ...loadedMessages,
+            ]);
+          }
+        })
+        .catch((error) => {
+          logger.error({ error }, 'Failed to load conversation history');
+        })
+        .finally(() => {
+          setIsLoadingHistory(false);
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialConversationId]);
+
   // Extract text content from message parts
   const getMessageText = (message: typeof messages[0]) => {
     if (!message.parts || message.parts.length === 0) return '';
@@ -62,9 +126,11 @@ export function ChatInterface({
       .join('');
   };
 
-  // Only show loading if we're waiting for a response (no assistant message being streamed yet)
+  // Show loading indicator when waiting for response or when response just started (empty assistant message)
   const lastMessage = messages[messages.length - 1];
-  const isLoading = (status === 'submitted' || status === 'streaming') && (lastMessage?.role as string) === 'user';
+  const lastMessageText = lastMessage ? getMessageText(lastMessage) : '';
+  const isLoading = status === 'submitted' ||
+    (status === 'streaming' && (lastMessage?.role as string) === 'assistant' && lastMessageText.trim() === '');
 
   // Auto-focus input when component mounts
   useEffect(() => {
@@ -80,18 +146,24 @@ export function ChatInterface({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Maintain focus on input when messages change (streaming responses)
+  // Maintain focus on input when status changes (during streaming and after response completes)
   useEffect(() => {
-    if (status === 'streaming' && inputRef.current && document.activeElement !== inputRef.current) {
-      inputRef.current.focus();
+    if (inputRef.current && document.activeElement !== inputRef.current) {
+      // Re-focus during streaming and when returning to ready state (after response completes)
+      if (status === 'streaming' || status === 'ready') {
+        inputRef.current.focus();
+      }
     }
-  }, [messages, status]);
+  }, [status]);
 
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!input || !input.trim()) return;
 
-    sendMessage({ text: input });
+    sendMessage(
+      { text: input },
+      conversationId ? { body: { conversationId } } : undefined
+    );
     setInput(''); // Clear input after sending
   };
 
@@ -101,7 +173,7 @@ export function ChatInterface({
       <button
         type="button"
         onClick={toggleFullscreen}
-        className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-12 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 z-10"
+        className="ring-offset-background focus:ring-ring absolute top-4 right-14 rounded-sm p-1.5 opacity-70 transition-all hover:opacity-100 hover:bg-muted focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 z-10"
       >
         {isFullscreen ? (
           <Minimize2 className="h-4 w-4" />
@@ -123,14 +195,14 @@ export function ChatInterface({
       </div>
 
       {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
+      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         <AnimatePresence initial={false}>
-          {messages.map((message) => (
+          {messages.map((message, index) => (
             <motion.div
-              key={message.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, ease: 'easeOut' }}
+              key={`${message.id}-${index}`}
+              initial={MESSAGE_ANIMATION_INITIAL}
+              animate={MESSAGE_ANIMATION_ANIMATE}
+              transition={MESSAGE_ANIMATION_TRANSITION}
               className={cn(
                 'flex gap-4',
                 (message.role as string) === 'user' ? 'justify-end' : 'justify-start'
@@ -175,8 +247,8 @@ export function ChatInterface({
         {/* Loading indicator */}
         {isLoading && (
           <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={MESSAGE_ANIMATION_INITIAL}
+            animate={MESSAGE_ANIMATION_ANIMATE}
             className="flex gap-4"
           >
             <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-primary via-blue-500 to-primary flex items-center justify-center shadow-sm">

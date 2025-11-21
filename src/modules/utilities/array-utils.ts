@@ -281,6 +281,40 @@ export function zip<T>(...arrays: T[][]): T[][] {
 }
 
 /**
+ * Zip multiple arrays into array of objects
+ * @param fieldArrays - Object mapping field names to arrays of values
+ * @returns Array of objects with fields populated from corresponding array values
+ * @example
+ * zipToObjects({
+ *   id: [1, 2, 3],
+ *   name: ['Alice', 'Bob', 'Carol'],
+ *   age: [25, 30, 35]
+ * })
+ * // Returns: [
+ * //   { id: 1, name: 'Alice', age: 25 },
+ * //   { id: 2, name: 'Bob', age: 30 },
+ * //   { id: 3, name: 'Carol', age: 35 }
+ * // ]
+ */
+export function zipToObjects(fieldArrays: Record<string, unknown[]>): Record<string, unknown>[] {
+  const fields = Object.keys(fieldArrays);
+  if (fields.length === 0) return [];
+
+  const maxLength = Math.max(...fields.map((field) => fieldArrays[field].length));
+  const result: Record<string, unknown>[] = [];
+
+  for (let i = 0; i < maxLength; i++) {
+    const obj: Record<string, unknown> = {};
+    for (const field of fields) {
+      obj[field] = fieldArrays[field][i];
+    }
+    result.push(obj);
+  }
+
+  return result;
+}
+
+/**
  * Partition array into two based on predicate
  */
 export function partition<T>(
@@ -353,4 +387,37 @@ export function fill<T>(length: number, value: T): T[] {
  */
 export function repeat<T>(pattern: T[], times: number): T[] {
   return Array(times).fill(pattern).flat();
+}
+
+/**
+ * Transform array by applying a module to each item
+ * This is a workflow-specific function that executes a module for each array item
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function forEach<T>(_options: {
+  arr: T[];
+  module: string;
+  inputs: Record<string, unknown>;
+  itemVariable?: string;
+}): Promise<unknown[]> {
+  // This function is meant to be called by the workflow engine
+  // which will handle the actual module execution
+  // For now, we'll throw an error if called directly
+  throw new Error(
+    'forEach must be called through the workflow engine. ' +
+    'It cannot be used directly in code.'
+  );
+}
+
+/**
+ * Transform array by mapping each item through a module
+ * Alias for forEach with clearer semantic meaning
+ */
+export async function mapWithModule<T>(options: {
+  arr: T[];
+  module: string;
+  inputs: Record<string, unknown>;
+  itemVariable?: string;
+}): Promise<unknown[]> {
+  return forEach(options);
 }

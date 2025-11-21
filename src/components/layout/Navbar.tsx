@@ -7,10 +7,10 @@ import { useEffect, useRef, useState } from 'react';
 const navigation = [
   { name: 'Dashboard', href: '/dashboard' },
   { name: 'Workflows', href: '/dashboard/workflows' },
-  { name: 'Clients', href: '/dashboard/clients' },
-  { name: 'Credentials', href: '/dashboard/credentials' },
   { name: 'Activity', href: '/dashboard/activity' },
-  { name: 'Settings', href: '/settings' },
+  { name: 'Credentials', href: '/dashboard/credentials' },
+  { name: 'Clients', href: '/dashboard/clients' },
+  // { name: 'Settings', href: '/settings' },
 ];
 
 export function Navbar() {
@@ -40,6 +40,7 @@ export function Navbar() {
             <Link
               key={item.name}
               href={item.href}
+              prefetch={true}
               data-active={isActive}
               className={`
                 relative inline-block select-none px-3 py-4 no-underline transition-colors duration-200 text-14

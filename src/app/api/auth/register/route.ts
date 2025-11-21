@@ -5,12 +5,17 @@ import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 import { logger } from '@/lib/logger';
+import { checkStrictRateLimit } from '@/lib/ratelimit';
 
 /**
  * POST /api/auth/register
  * Register a new user via invitation token
  */
 export async function POST(request: NextRequest) {
+  // Apply rate limiting (3 requests per minute) to prevent registration abuse
+  const rateLimitResult = await checkStrictRateLimit(request);
+  if (rateLimitResult) return rateLimitResult;
+
   try {
     const body = await request.json();
     const { token, email, password, name } = body;

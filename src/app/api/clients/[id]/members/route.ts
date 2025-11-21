@@ -4,7 +4,7 @@ import { getOrganizationMembers, getUserRoleInOrganization } from '@/lib/organiz
 import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
 import { accountsTable, invitationsTable } from '@/lib/schema';
-import { eq } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 
 /**
@@ -30,29 +30,35 @@ export async function GET(
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
 
-    // Get all members
+    // Get all members with account details in a single query (fixes N+1 problem)
     const members = await getOrganizationMembers(id);
 
-    // Fetch user details from accounts table (NextAuth stores user emails there)
-    const membersWithDetails = await Promise.all(
-      members.map(async (member) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [account] = await (db as any)
+    // Fetch all account details in one query
+    const userIds = members.map(m => m.userId);
+    const accounts = userIds.length > 0
+      ? await db
           .select()
           .from(accountsTable)
-          .where(eq(accountsTable.userId, member.userId))
-          .limit(1);
+          .where(inArray(accountsTable.userId, userIds))
+      : [];
 
-        return {
-          id: member.id,
-          userId: member.userId,
-          email: account?.account_name || member.userId, // Use account_name which may contain email
-          name: account?.account_name,
-          role: member.role,
-          joinedAt: member.joinedAt,
-        };
-      })
+    // Create lookup map for O(1) access
+    const accountMap = new Map(
+      accounts.map(acc => [acc.userId, acc])
     );
+
+    // Map members with their account details
+    const membersWithDetails = members.map((member) => {
+      const account = accountMap.get(member.userId);
+      return {
+        id: member.id,
+        userId: member.userId,
+        email: account?.account_name || member.userId,
+        name: account?.account_name,
+        role: member.role,
+        joinedAt: member.joinedAt,
+      };
+    });
 
     return NextResponse.json({ members: membersWithDetails });
   } catch (error) {
@@ -123,7 +129,7 @@ export async function POST(
     });
 
     // Generate invitation link
-    const inviteUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/auth/register?token=${token}&email=${encodeURIComponent(email)}`;
+    const inviteUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:3123'}/auth/register?token=${token}&email=${encodeURIComponent(email)}`;
 
     // TODO: Send email with invitation link
 

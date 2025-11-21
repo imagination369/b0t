@@ -20,6 +20,25 @@ import { logger } from '@/lib/logger';
 
 const pools = new Map<string, mysql.Pool>();
 
+/**
+ * Validate identifier (table/column names) to prevent SQL injection
+ * Only allows alphanumeric characters, underscores, and dots
+ */
+function validateIdentifier(identifier: string): string {
+  if (!/^[a-zA-Z0-9_.]+$/.test(identifier)) {
+    throw new Error(`Invalid identifier: ${identifier}. Only alphanumeric characters, underscores, and dots are allowed.`);
+  }
+  return identifier;
+}
+
+/**
+ * Quote identifier for safe use in SQL (MySQL uses backticks)
+ */
+function quoteIdentifier(identifier: string): string {
+  validateIdentifier(identifier);
+  return `\`${identifier.replace(/`/g, '``')}\``;
+}
+
 export interface MySQLConnectionOptions {
   host: string;
   port?: number;
@@ -129,20 +148,40 @@ export async function select(
   logger.info({ database: connection.database, table, options }, 'Selecting from MySQL');
 
   try {
-    const columns = options.columns?.join(', ') || '*';
-    let sql = `SELECT ${columns} FROM ${table}`;
+    // Validate and quote table name
+    const quotedTable = quoteIdentifier(table);
+
+    // Validate and quote column names
+    const columns = options.columns
+      ? options.columns.map((col) => quoteIdentifier(col)).join(', ')
+      : '*';
+
+    let sql = `SELECT ${columns} FROM ${quotedTable}`;
     const params: unknown[] = [];
 
-    // WHERE clause
+    // WHERE clause - validate column names
     if (options.where && Object.keys(options.where).length > 0) {
-      const conditions = Object.keys(options.where).map((key) => `${key} = ?`);
+      const conditions = Object.keys(options.where).map((key) => {
+        const quotedKey = quoteIdentifier(key);
+        return `${quotedKey} = ?`;
+      });
       sql += ` WHERE ${conditions.join(' AND ')}`;
       params.push(...Object.values(options.where));
     }
 
-    // ORDER BY
+    // ORDER BY - validate column names and direction
     if (options.orderBy) {
-      sql += ` ORDER BY ${options.orderBy}`;
+      // Parse ORDER BY (e.g., "column ASC" or "column1, column2 DESC")
+      const orderParts = options.orderBy.split(',').map((part) => {
+        const tokens = part.trim().split(/\s+/);
+        const column = quoteIdentifier(tokens[0]);
+        const direction = tokens[1]?.toUpperCase();
+        if (direction && !['ASC', 'DESC'].includes(direction)) {
+          throw new Error(`Invalid ORDER BY direction: ${direction}`);
+        }
+        return direction ? `${column} ${direction}` : column;
+      });
+      sql += ` ORDER BY ${orderParts.join(', ')}`;
     }
 
     // LIMIT and OFFSET
@@ -178,13 +217,15 @@ export async function insert(
   logger.info({ database: connection.database, table }, 'Inserting into MySQL');
 
   try {
-    const columns = Object.keys(data).join(', ');
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
+    const columns = Object.keys(data).map((col) => quoteIdentifier(col)).join(', ');
     const placeholders = Object.keys(data)
       .map(() => '?')
       .join(', ');
     const values = Object.values(data);
 
-    const sql = `INSERT INTO ${table} (${columns}) VALUES (${placeholders})`;
+    const sql = `INSERT INTO ${quotedTable} (${columns}) VALUES (${placeholders})`;
 
     const result = await query(connection, sql, values);
 
@@ -231,7 +272,9 @@ export async function insertMany(
       return { affectedRows: 0 };
     }
 
-    const columns = Object.keys(rows[0]).join(', ');
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
+    const columns = Object.keys(rows[0]).map((col) => quoteIdentifier(col)).join(', ');
     const placeholders = rows
       .map(
         (row) =>
@@ -243,7 +286,7 @@ export async function insertMany(
 
     const values = rows.flatMap((row) => Object.values(row));
 
-    const sql = `INSERT INTO ${table} (${columns}) VALUES ${placeholders}`;
+    const sql = `INSERT INTO ${quotedTable} (${columns}) VALUES ${placeholders}`;
 
     const result = await query(connection, sql, values);
 
@@ -282,16 +325,18 @@ export async function update(
   logger.info({ database: connection.database, table, where }, 'Updating MySQL rows');
 
   try {
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
     const setClause = Object.keys(data)
-      .map((key) => `${key} = ?`)
+      .map((key) => `${quoteIdentifier(key)} = ?`)
       .join(', ');
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
+      .map((key) => `${quoteIdentifier(key)} = ?`)
       .join(' AND ');
 
     const params = [...Object.values(data), ...Object.values(where)];
 
-    const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
+    const sql = `UPDATE ${quotedTable} SET ${setClause} WHERE ${whereClause}`;
 
     const result = await query(connection, sql, params);
 
@@ -326,12 +371,14 @@ export async function deleteRows(
   logger.info({ database: connection.database, table, where }, 'Deleting MySQL rows');
 
   try {
+    // Validate and quote table and column names
+    const quotedTable = quoteIdentifier(table);
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
+      .map((key) => `${quoteIdentifier(key)} = ?`)
       .join(' AND ');
     const params = Object.values(where);
 
-    const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
+    const sql = `DELETE FROM ${quotedTable} WHERE ${whereClause}`;
 
     const result = await query(connection, sql, params);
 
@@ -418,11 +465,16 @@ export async function count(
   logger.info({ database: connection.database, table, where }, 'Counting MySQL rows');
 
   try {
-    let sql = `SELECT COUNT(*) as count FROM ${table}`;
+    // Validate and quote table name
+    const quotedTable = quoteIdentifier(table);
+    let sql = `SELECT COUNT(*) as count FROM ${quotedTable}`;
     const params: unknown[] = [];
 
     if (where && Object.keys(where).length > 0) {
-      const conditions = Object.keys(where).map((key) => `${key} = ?`);
+      const conditions = Object.keys(where).map((key) => {
+        const quotedKey = quoteIdentifier(key);
+        return `${quotedKey} = ?`;
+      });
       sql += ` WHERE ${conditions.join(' AND ')}`;
       params.push(...Object.values(where));
     }

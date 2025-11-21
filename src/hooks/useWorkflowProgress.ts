@@ -43,9 +43,16 @@ export interface WorkflowExecutionState {
  *
  * @param workflowId - The ID of the workflow to track
  * @param enabled - Whether to start the workflow execution
+ * @param triggerType - The type of trigger (manual, chat, chat-input, etc.)
+ * @param triggerData - Optional trigger data for triggers like chat-input
  * @returns Workflow execution state and control functions
  */
-export function useWorkflowProgress(workflowId: string | null, enabled: boolean) {
+export function useWorkflowProgress(
+  workflowId: string | null,
+  enabled: boolean,
+  triggerType?: string,
+  triggerData?: Record<string, unknown>
+) {
   const [state, setState] = useState<WorkflowExecutionState>({
     status: 'idle',
     currentStep: 0,
@@ -90,8 +97,18 @@ export function useWorkflowProgress(workflowId: string | null, enabled: boolean)
       steps: [],
     });
 
+    // Build stream URL with optional trigger data
+    const params = new URLSearchParams();
+    if (triggerType) {
+      params.set('triggerType', triggerType);
+    }
+    if (triggerData) {
+      params.set('triggerData', JSON.stringify(triggerData));
+    }
+    const streamUrl = `/api/workflows/${workflowId}/stream${params.toString() ? `?${params.toString()}` : ''}`;
+
     // Create EventSource for SSE connection
-    const eventSource = new EventSource(`/api/workflows/${workflowId}/stream`);
+    const eventSource = new EventSource(streamUrl);
     eventSourceRef.current = eventSource;
 
     // Handle workflow_started event
@@ -148,6 +165,7 @@ export function useWorkflowProgress(workflowId: string | null, enabled: boolean)
       setState((prev) => ({
         ...prev,
         status: 'failed',
+        error: data.error, // Set workflow-level error from step failure
         steps: prev.steps.map((step, i) =>
           i === data.stepIndex
             ? { ...step, status: 'failed' as const, error: data.error }
@@ -194,7 +212,7 @@ export function useWorkflowProgress(workflowId: string | null, enabled: boolean)
     return () => {
       disconnect();
     };
-  }, [workflowId, enabled, disconnect]);
+  }, [workflowId, enabled, triggerType, triggerData, disconnect]);
 
   return {
     state,

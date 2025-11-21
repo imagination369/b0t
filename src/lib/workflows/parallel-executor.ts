@@ -10,7 +10,7 @@ import type { WorkflowStep } from './control-flow';
  * Algorithm:
  * 1. Build dependency graph by analyzing {{variable}} references
  * 2. Group steps into "waves" where each wave contains independent steps
- * 3. Execute each wave in parallel with Promise.all()
+ * 3. Execute each wave in parallel with Promise.allSettled() (max 10 concurrent)
  * 4. Sequential waves ensure dependencies are met
  *
  * Example:
@@ -23,6 +23,42 @@ import type { WorkflowStep } from './control-flow';
  * Wave 1 (parallel): [1, 2, 3]
  * Wave 2 (sequential): [4]
  */
+
+// Maximum concurrent steps per wave to prevent resource exhaustion
+const MAX_WAVE_CONCURRENCY = parseInt(process.env.MAX_WAVE_CONCURRENCY || '10', 10);
+
+/**
+ * Execute promises with limited concurrency
+ */
+async function executeWithConcurrency<T>(
+  items: T[],
+  fn: (item: T) => Promise<unknown>,
+  concurrency: number
+): Promise<PromiseSettledResult<unknown>[]> {
+  const results: PromiseSettledResult<unknown>[] = [];
+  const executing: Promise<void>[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const promise = fn(item).then(
+      (value) => {
+        results[i] = { status: 'fulfilled', value };
+      },
+      (reason) => {
+        results[i] = { status: 'rejected', reason };
+      }
+    );
+
+    executing.push(promise);
+
+    if (executing.length >= concurrency || i === items.length - 1) {
+      await Promise.all(executing);
+      executing.length = 0;
+    }
+  }
+
+  return results;
+}
 
 export interface StepDependencies {
   stepId: string;
@@ -67,6 +103,15 @@ export function buildDependencyGraph(
   // Built-in variables that don't represent step outputs
   const builtInVars = new Set(['user', 'trigger', ...Object.keys(context.variables)]);
 
+  // Build mapping from outputAs variable names to step IDs
+  // This allows us to track dependencies when steps use outputAs
+  const outputVarToStepId = new Map<string, string>();
+  for (const step of steps) {
+    if (step.type === 'action' && 'outputAs' in step && step.outputAs) {
+      outputVarToStepId.set(step.outputAs, step.id);
+    }
+  }
+
   for (const step of steps) {
     const variableRefs = new Set<string>();
 
@@ -81,11 +126,17 @@ export function buildDependencyGraph(
       extractVariableReferences(step.condition, variableRefs);
     }
 
-    // Filter out built-in variables and keep only step output references
+    // Filter out built-in variables and resolve step dependencies
     const stepDependencies = new Set<string>();
     for (const varRef of variableRefs) {
-      // Check if this variable references another step's output
-      if (stepIds.has(varRef) && !builtInVars.has(varRef)) {
+      if (builtInVars.has(varRef)) continue;
+
+      // Check if this variable references another step's output via outputAs
+      const dependsOnStepId = outputVarToStepId.get(varRef);
+      if (dependsOnStepId && dependsOnStepId !== step.id) {
+        stepDependencies.add(dependsOnStepId);
+      } else if (stepIds.has(varRef) && varRef !== step.id) {
+        // Also support direct step ID references (for backward compatibility)
         stepDependencies.add(varRef);
       }
     }
@@ -234,12 +285,42 @@ export async function executeStepsInParallel(
 
       const startTime = Date.now();
 
-      // Execute all steps in wave concurrently
-      const results = await Promise.all(
-        wave.map((step) => executeStepFn(step, context))
-      );
+      // Execute all steps in wave with concurrency limit to prevent resource exhaustion
+      const results = wave.length > MAX_WAVE_CONCURRENCY
+        ? await executeWithConcurrency(
+            wave,
+            (step) => executeStepFn(step, context),
+            MAX_WAVE_CONCURRENCY
+          )
+        : await Promise.allSettled(
+            wave.map((step) => executeStepFn(step, context))
+          );
 
       const duration = Date.now() - startTime;
+
+      // Check for failures
+      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      const successes = results.filter((r): r is PromiseFulfilledResult<unknown> => r.status === 'fulfilled');
+
+      if (failures.length > 0) {
+        logger.error(
+          {
+            waveNumber: waveIdx + 1,
+            failureCount: failures.length,
+            totalSteps: wave.length,
+            errors: failures.map((f) => f.reason instanceof Error ? f.reason.message : String(f.reason)),
+          },
+          'Partial wave failure - some steps failed'
+        );
+
+        // Throw error with details about all failures
+        const errorMessages = failures.map((f) => {
+          const stepId = wave.find((_, i) => results[i] === f)?.id || 'unknown';
+          const error = f.reason instanceof Error ? f.reason.message : String(f.reason);
+          return `Step ${stepId}: ${error}`;
+        });
+        throw new Error(`Wave ${waveIdx + 1} failed with ${failures.length} error(s):\n${errorMessages.join('\n')}`);
+      }
 
       logger.info(
         {
@@ -251,8 +332,8 @@ export async function executeStepsInParallel(
         'Completed parallel wave execution'
       );
 
-      // Last output is from the last step in the wave
-      lastOutput = results[results.length - 1];
+      // Last output is from the last successful step in the wave
+      lastOutput = successes[successes.length - 1]?.value;
     }
   }
 

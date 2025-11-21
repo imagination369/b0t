@@ -76,14 +76,23 @@ async function httpRequestInternal<T = unknown>(
       ...axiosConfig,
     });
 
+    // Optimized: Use content-length header or estimate size without stringifying large payloads
+    const dataLength = response.headers['content-length']
+      || (typeof response.data === 'string' ? response.data.length : '~object');
+
     logger.info(
       {
         url,
         method,
         status: response.status,
-        dataLength: JSON.stringify(response.data).length,
+        dataLength,
       },
       'HTTP request successful'
+    );
+
+    logger.debug(
+      'HTTP response structure: { data: <response>, status: number, statusText: string, headers: object }. ' +
+      'Access the response data using .data property (e.g., {{variable.data}})'
     );
 
     return {

@@ -16,113 +16,30 @@ import pino from 'pino';
  * logger.debug('Debug info', { data: someData });
  */
 
-const isDevelopment = process.env.NODE_ENV === 'development';
-const enableFileLogs = process.env.ENABLE_FILE_LOGS !== 'false'; // Default: enabled
-const isNodeRuntime = process.env.NEXT_RUNTIME !== 'edge';
+// IMPORTANT: Check Edge Runtime BEFORE accessing any Node.js APIs
+const isEdgeRuntime = process.env.NEXT_RUNTIME === 'edge';
 
-// Lazy load Node.js modules only when needed (avoid Edge Runtime issues)
-let logsDir: string | null = null;
-let logFilePath: string | null = null;
-let errorLogFilePath: string | null = null;
+// Create logger based on runtime environment
+let pinoLogger: pino.Logger;
 
-// Create logs directory if it doesn't exist (only in Node.js runtime)
-if (enableFileLogs && typeof window === 'undefined' && isNodeRuntime) {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs');
-
-    logsDir = path.join(process.cwd(), 'logs');
-    if (!fs.existsSync(logsDir)) {
-      fs.mkdirSync(logsDir, { recursive: true });
-    }
-
-    logFilePath = path.join(logsDir, 'app.log');
-    errorLogFilePath = path.join(logsDir, 'error.log');
-  } catch {
-    // Ignore errors in edge runtime or during build
-  }
-}
-
-// Create file write streams (simple append, no rotation in-process)
-const createFileStream = (filePath: string) => {
-  if (!isNodeRuntime) return null;
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs');
-    return fs.createWriteStream(filePath, { flags: 'a' });
-  } catch {
-    return null;
-  }
-};
-
-// Create multiple streams (console + files)
-const streams: pino.StreamEntry[] = [];
-
-// Always log to console in development
-if (isDevelopment) {
-  streams.push({
-    level: 'debug',
-    stream: process.stdout,
-  });
-}
-
-// Add file streams if enabled (only in Node.js runtime)
-if (enableFileLogs && typeof window === 'undefined' && isNodeRuntime && logFilePath && errorLogFilePath) {
-  const appStream = createFileStream(logFilePath);
-  const errorStream = createFileStream(errorLogFilePath);
-
-  if (appStream) {
-    streams.push({
-      level: 'info',
-      stream: appStream,
-    });
-  }
-
-  if (errorStream) {
-    streams.push({
-      level: 'error',
-      stream: errorStream,
-    });
-  }
-}
-
-// Fallback to stdout if no streams configured
-if (streams.length === 0) {
-  streams.push({
+if (isEdgeRuntime) {
+  // Simple Edge-compatible logger - no Node.js APIs
+  pinoLogger = pino({
     level: 'info',
-    stream: process.stdout,
+    browser: {
+      asObject: true,
+    },
   });
+} else {
+  // Node.js runtime - load full logger from separate file
+  // This avoids bundling Node.js APIs into Edge Runtime
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createNodeLogger } = require('./logger.node');
+  pinoLogger = createNodeLogger();
 }
 
-// Create logger with multiple streams (or single stream for Edge runtime)
-export const logger = isNodeRuntime && streams.length > 0
-  ? pino(
-      {
-        level: process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info'),
-        formatters: {
-          level: (label) => {
-            return { level: label };
-          },
-        },
-        timestamp: pino.stdTimeFunctions.isoTime,
-      },
-      pino.multistream(streams)
-    )
-  : pino({
-      level: process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info'),
-      formatters: {
-        level: (label) => {
-          return { level: label };
-        },
-      },
-      timestamp: pino.stdTimeFunctions.isoTime,
-      browser: {
-        asObject: true,
-      },
-    });
+// Export the logger
+export const logger = pinoLogger;
 
 // Helper functions for common logging patterns
 export const logJobStart = (jobName: string) => {

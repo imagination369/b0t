@@ -40,11 +40,11 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const API_HOST = 'twitter-aio.p.rapidapi.com';
 
 interface SearchParams {
   query: string;
+  apiKey: string; // RapidAPI key - pass from workflow credentials
   category?: 'Top' | 'Latest' | 'People' | 'Photos' | 'Videos';
   count?: number;
   since?: string; // Format: YYYY-MM-DD
@@ -77,12 +77,14 @@ interface SearchResponse {
 }
 
 export async function searchTwitter(params: SearchParams): Promise<SearchResponse> {
-  if (!RAPIDAPI_KEY) {
-    throw new Error('RAPIDAPI_KEY not set in environment variables');
+  const { apiKey, ...searchParams } = params;
+
+  if (!apiKey) {
+    throw new Error('RapidAPI key is required. Please add your RapidAPI credentials at /settings/credentials');
   }
 
-  // Generate cache key from params
-  const cacheKey = JSON.stringify(params);
+  // Generate cache key from params (excluding apiKey for security)
+  const cacheKey = JSON.stringify(searchParams);
   const cached = queryCache.get(cacheKey);
 
   // Return cached results if not expired
@@ -93,31 +95,31 @@ export async function searchTwitter(params: SearchParams): Promise<SearchRespons
 
   // Build filters object for date range and engagement thresholds
   const filters: Record<string, string | number | boolean> = {};
-  if (params.since) filters.since = params.since;
-  if (params.until) filters.until = params.until;
-  if (params.minimumLikesCount !== undefined) filters.minimumLikesCount = params.minimumLikesCount;
-  if (params.minimumRetweetsCount !== undefined) filters.minimumRetweetsCount = params.minimumRetweetsCount;
-  if (params.minimumRepliesCount !== undefined) filters.minimumRepliesCount = params.minimumRepliesCount;
-  if (params.removePostsWithLinks) filters.removePostsWithLinks = params.removePostsWithLinks;
-  if (params.removePostsWithMedia) filters.removePostsWithMedia = params.removePostsWithMedia;
+  if (searchParams.since) filters.since = searchParams.since;
+  if (searchParams.until) filters.until = searchParams.until;
+  if (searchParams.minimumLikesCount !== undefined) filters.minimumLikesCount = searchParams.minimumLikesCount;
+  if (searchParams.minimumRetweetsCount !== undefined) filters.minimumRetweetsCount = searchParams.minimumRetweetsCount;
+  if (searchParams.minimumRepliesCount !== undefined) filters.minimumRepliesCount = searchParams.minimumRepliesCount;
+  if (searchParams.removePostsWithLinks) filters.removePostsWithLinks = searchParams.removePostsWithLinks;
+  if (searchParams.removePostsWithMedia) filters.removePostsWithMedia = searchParams.removePostsWithMedia;
 
   const options = {
     method: 'GET',
-    url: `https://${API_HOST}/search/${encodeURIComponent(params.query)}`,
+    url: `https://${API_HOST}/search/${encodeURIComponent(searchParams.query)}`,
     params: {
-      count: String(params.count || 20),
-      category: params.category || 'Latest',
+      count: String(searchParams.count || 20),
+      category: searchParams.category || 'Latest',
       ...(Object.keys(filters).length > 0 && { filters: JSON.stringify(filters) }),
       includeTimestamp: 'true',
     },
     headers: {
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'x-rapidapi-host': API_HOST,
     },
   };
 
   try {
-    logger.info({ query: params.query, count: params.count }, 'Searching Twitter via RapidAPI');
+    logger.info({ query: searchParams.query, count: searchParams.count }, 'Searching Twitter via RapidAPI');
     const response = await rapidApiAxios.request(options);
 
     // Parse the complex Twitter AIO response structure
@@ -166,7 +168,7 @@ export async function searchTwitter(params: SearchParams): Promise<SearchRespons
     }
 
     // Filter out tweets with links if requested
-    if (params.removePostsWithLinks) {
+    if (searchParams.removePostsWithLinks) {
       results = results.filter(tweet => {
         const text = tweet.text || '';
         // Check for URLs in the text (http, https, or t.co links)
@@ -175,14 +177,14 @@ export async function searchTwitter(params: SearchParams): Promise<SearchRespons
     }
 
     // Filter out tweets with media if requested
-    if (params.removePostsWithMedia) {
+    if (searchParams.removePostsWithMedia) {
       results = results.filter(tweet => {
         return !tweet.media || tweet.media.length === 0;
       });
     }
 
     logger.info(
-      { resultsCount: results.length, query: params.query },
+      { resultsCount: results.length, query: searchParams.query },
       'Twitter search completed'
     );
 
@@ -234,7 +236,7 @@ export async function searchTwitter(params: SearchParams): Promise<SearchRespons
 
     logger.error(
       {
-        query: params.query,
+        query: searchParams.query,
         status,
         responseData,
         userMessage,

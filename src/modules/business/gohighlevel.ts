@@ -1,856 +1,1331 @@
-import { createCircuitBreaker } from '@/lib/resilience';
-import { createRateLimiter, withRateLimit } from '@/lib/rate-limiter';
-import { logger } from '@/lib/logger';
-
 /**
- * GoHighLevel (GHL) CRM Module
+ * GoHighLevel (GHL) API Client with Reliability Infrastructure
  *
- * Complete CRM and marketing automation platform integration
- * - Manage contacts, opportunities, and pipelines
- * - Send SMS and emails
- * - Create and manage appointments
- * - Tag management
- * - Trigger workflows
- * - Custom field operations
- * - Generic API access for any endpoint
+ * Complete integration with GHL CRM platform including:
+ * - Contacts management (CRUD, tags, custom fields)
+ * - Conversations (SMS, email, calls)
+ * - Calendar & Appointments
+ * - Opportunities (sales pipeline)
+ * - Campaigns & Workflows
+ * - Circuit breaker to prevent hammering failing API
+ * - Rate limiting for API quota management (100 req/10sec, 200k/day)
+ * - Structured logging
+ * - Automatic error handling
  *
- * Perfect for:
- * - Lead management automation
- * - Sales pipeline workflows
- * - Customer communication
- * - Appointment scheduling
- * - Marketing automation
- * - CRM synchronization
+ * API Version: v2 (OAuth 2.0)
+ * Rate Limits: 100 requests per 10 seconds, 200,000 requests per day
+ * Documentation: https://marketplace.gohighlevel.com/docs/
  *
- * Rate Limits:
- * - Burst: 100 requests per 10 seconds
- * - Daily: 200,000 requests per day
- * - Monitored via X-RateLimit-* headers
- *
- * Authentication:
- * - OAuth 2.0 (access token valid 24h)
- * - Or API Key
+ * @module business/gohighlevel
  */
 
-const GHL_API_KEY = process.env.GHL_API_KEY;
-const GHL_BASE_URL = 'https://rest.gohighlevel.com/v1';
-
-if (!GHL_API_KEY) {
-  logger.warn('⚠️  GHL_API_KEY not set. GoHighLevel features will not work.');
-}
-
-// Rate limiter: GHL allows 100 req/10sec burst, 200k/day
-// Conservative: 100 req/10sec = 10 req/sec = 1 req/100ms
-const ghlRateLimiter = createRateLimiter({
-  maxConcurrent: 5,
-  minTime: 100, // 100ms between requests
-  reservoir: 100,
-  reservoirRefreshAmount: 100,
-  reservoirRefreshInterval: 10000, // 10 seconds
-  id: 'gohighlevel',
-});
+import { logger } from '@/lib/logger';
+import { createCircuitBreaker } from '@/lib/resilience';
+import { createRateLimiter, withRateLimit } from '@/lib/rate-limiter';
 
 // ============================================================================
-// TYPES
+// TYPE DEFINITIONS
 // ============================================================================
 
 export interface GHLContact {
   id: string;
   locationId: string;
-  firstName?: string;
-  lastName?: string;
   email?: string;
   phone?: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  dateOfBirth?: string;
+  address1?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+  companyName?: string;
+  website?: string;
   tags?: string[];
   customFields?: Record<string, unknown>;
+  source?: string;
+  assignedTo?: string;
   dateAdded?: string;
   dateUpdated?: string;
-  [key: string]: unknown;
 }
 
-export interface GHLOpportunity {
+export interface GHLConversation {
   id: string;
   locationId: string;
-  pipelineId: string;
-  pipelineStageId: string;
+  contactId: string;
+  type: 'SMS' | 'Email' | 'Call' | 'WhatsApp' | 'GMB' | 'IG' | 'FB' | 'Live_Chat';
+  lastMessageBody?: string;
+  lastMessageType?: 'message_inbound' | 'message_outbound';
+  unreadCount?: number;
+  dateAdded?: string;
+  dateUpdated?: string;
+}
+
+export interface GHLMessage {
+  id: string;
+  conversationId: string;
+  type: 'SMS' | 'Email' | 'Call' | 'WhatsApp';
+  messageType: 'message_inbound' | 'message_outbound';
+  body: string;
+  direction: 'inbound' | 'outbound';
+  status?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
+  dateAdded: string;
+  attachments?: string[];
+}
+
+export interface GHLCalendar {
+  id: string;
+  locationId: string;
   name: string;
-  monetaryValue?: number;
-  status: string;
-  contactId?: string;
-  assignedTo?: string;
-  [key: string]: unknown;
+  description?: string;
+  slug?: string;
+  widgetSlug?: string;
+  widgetType?: string;
+  eventTitle?: string;
+  eventColor?: string;
+  meetingLocation?: string;
+  appointmentPerSlot?: number;
+  appointmentPerDay?: number;
+  openHours?: unknown[];
+  enableRecurring?: boolean;
+  recurring?: unknown;
+  formId?: string;
+  stickyContact?: boolean;
+  isLivePaymentMode?: boolean;
+  autoConfirm?: boolean;
+  shouldSendAlertEmailsToAssignedMember?: boolean;
+  alertEmail?: string;
+  googleInvitationEmails?: boolean;
+  allowReschedule?: boolean;
+  allowCancellation?: boolean;
+  shouldAssignContactToTeamMember?: boolean;
+  shouldSkipAssigningContactForExisting?: boolean;
+  notes?: string;
+  pixelId?: string;
+  formSubmitType?: string;
+  formSubmitRedirectURL?: string;
+  formSubmitThanksMessage?: string;
+  availabilities?: unknown[];
+  teamMembers?: string[];
+  eventType?: string;
 }
 
 export interface GHLAppointment {
   id: string;
   locationId: string;
-  contactId: string;
   calendarId: string;
+  contactId: string;
+  title: string;
   startTime: string;
   endTime: string;
-  title: string;
+  appointmentStatus: 'new' | 'confirmed' | 'cancelled' | 'showed' | 'noshow' | 'rescheduled' | 'invalid';
+  assignedUserId?: string;
+  address?: string;
   notes?: string;
-  appointmentStatus?: string;
-  [key: string]: unknown;
+  dateAdded?: string;
+  dateUpdated?: string;
+}
+
+export interface GHLOpportunity {
+  id: string;
+  locationId: string;
+  name: string;
+  pipelineId: string;
+  pipelineStageId: string;
+  contactId?: string;
+  status: 'open' | 'won' | 'lost' | 'abandoned';
+  monetaryValue?: number;
+  assignedTo?: string;
+  customFields?: Record<string, unknown>;
+  source?: string;
+  lastStatusChangeAt?: string;
+  lastStageChangeAt?: string;
+  dateAdded?: string;
+  dateUpdated?: string;
+}
+
+export interface GHLPipeline {
+  id: string;
+  locationId: string;
+  name: string;
+  stages: GHLPipelineStage[];
+}
+
+export interface GHLPipelineStage {
+  id: string;
+  name: string;
+  position: number;
 }
 
 export interface GHLTag {
   id: string;
-  name: string;
   locationId: string;
+  name: string;
+  dateAdded?: string;
 }
 
-export interface GHLApiRequestConfig {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-  endpoint: string;
+export interface GHLCustomField {
+  id: string;
+  locationId: string;
+  name: string;
+  fieldKey: string;
+  dataType: 'TEXT' | 'LARGE_TEXT' | 'NUMERICAL' | 'PHONE' | 'MONETORY' | 'CHECKBOX' | 'SINGLE_OPTIONS' | 'MULTIPLE_OPTIONS' | 'DATE' | 'FILE_UPLOAD';
+  position: number;
+}
+
+export interface GHLLocation {
+  id: string;
+  name: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  postalCode?: string;
+  website?: string;
+  timezone?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+}
+
+export interface GHLRequestOptions {
+  accessToken?: string;
   locationId?: string;
-  data?: unknown;
-  params?: Record<string, unknown>;
-  headers?: Record<string, string>;
 }
 
 // ============================================================================
-// INTERNAL HELPER: Make authenticated API request
+// CREDENTIAL DETECTION
 // ============================================================================
 
-async function makeGHLRequestInternal<T>(
+const GHL_ACCESS_TOKEN = process.env.GHL_ACCESS_TOKEN;
+const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID;
+const GHL_API_BASE_URL = 'https://services.leadconnectorhq.com';
+
+const hasCredentials = GHL_ACCESS_TOKEN !== undefined;
+
+if (!hasCredentials) {
+  logger.warn('⚠️  GHL credentials not set. GoHighLevel features will not work.');
+}
+
+// ============================================================================
+// RATE LIMITER CONFIGURATION
+// ============================================================================
+
+// GHL Rate Limits:
+// - Burst: 100 requests per 10 seconds per app per resource
+// - Daily: 200,000 requests per day per app per resource
+const ghlRateLimiter = createRateLimiter({
+  maxConcurrent: 10,              // Max parallel requests
+  minTime: 100,                   // Min 100ms between requests
+  reservoir: 100,                 // Initial token count (burst limit)
+  reservoirRefreshAmount: 100,    // Tokens added per interval
+  reservoirRefreshInterval: 10000, // Refresh every 10 seconds
+  id: 'gohighlevel',
+});
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Make authenticated request to GHL API
+ */
+async function makeGHLRequest<T>(
   endpoint: string,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' = 'GET',
-  body?: unknown,
-  params?: Record<string, unknown>,
-  customHeaders?: Record<string, string>
+  options: GHLRequestOptions & {
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    body?: unknown;
+    queryParams?: Record<string, string>;
+  }
 ): Promise<T> {
-  if (!GHL_API_KEY) {
-    throw new Error('GoHighLevel API key not configured. Set GHL_API_KEY.');
+  const accessToken = options.accessToken || GHL_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    throw new Error('GHL access token not configured. Provide accessToken or set GHL_ACCESS_TOKEN.');
   }
 
-  // Build URL with query params
-  const url = new URL(`${GHL_BASE_URL}${endpoint}`);
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        url.searchParams.append(key, String(value));
-      }
+  const url = new URL(`${GHL_API_BASE_URL}${endpoint}`);
+
+  if (options.queryParams) {
+    Object.entries(options.queryParams).forEach(([key, value]) => {
+      url.searchParams.append(key, value);
     });
   }
 
-  const options: RequestInit = {
-    method,
+  const requestOptions: RequestInit = {
+    method: options.method || 'GET',
     headers: {
-      'Authorization': `Bearer ${GHL_API_KEY}`,
+      'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
-      ...customHeaders,
+      'Version': '2021-07-28', // GHL API version header
     },
   };
 
-  if (body && method !== 'GET') {
-    options.body = JSON.stringify(body);
+  if (options.body) {
+    requestOptions.body = JSON.stringify(options.body);
   }
 
-  logger.info({ method, endpoint, hasBody: !!body }, 'Making GHL API request');
+  logger.info({ method: options.method || 'GET', endpoint }, 'Making GHL API request');
 
-  const response = await fetch(url.toString(), options);
-
-  // Log rate limit headers for monitoring
-  const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
-  const rateLimitLimit = response.headers.get('X-RateLimit-Limit');
-  if (rateLimitRemaining || rateLimitLimit) {
-    logger.debug(
-      {
-        remaining: rateLimitRemaining,
-        limit: rateLimitLimit,
-        endpoint
-      },
-      'GHL rate limit status'
-    );
-  }
+  const response = await fetch(url.toString(), requestOptions);
 
   if (!response.ok) {
     const errorText = await response.text();
-    logger.error(
-      {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorText,
-        endpoint
-      },
-      'GHL API request failed'
-    );
-    throw new Error(
-      `GHL API error (${response.status}): ${response.statusText} - ${errorText}`
-    );
+    throw new Error(`GHL API error (${response.status}): ${errorText}`);
   }
 
   const data = await response.json();
-  logger.info({ endpoint, status: response.status }, 'GHL API request successful');
-
   return data as T;
 }
 
-// Keep makeGHLRequest as simple helper (no wrapping at this level)
-// Individual functions will be wrapped with circuit breaker + rate limiting
-async function makeGHLRequest<T>(
-  endpoint: string,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' = 'GET',
-  body?: unknown,
-  params?: Record<string, unknown>,
-  customHeaders?: Record<string, string>
-): Promise<T> {
-  return makeGHLRequestInternal<T>(endpoint, method, body, params, customHeaders);
-}
-
 // ============================================================================
-// GENERIC API REQUEST FUNCTION (for maximum flexibility)
+// CONTACTS API
 // ============================================================================
 
 /**
- * Generic API request - use for ANY GHL endpoint
- * This allows workflows to call any GHL API endpoint, even new/undocumented ones
- *
- * @example
- * // Custom endpoint call
- * await apiRequest({
- *   method: 'POST',
- *   endpoint: '/contacts/bulk-import',
- *   locationId: 'abc123',
- *   data: { contacts: [...] }
- * })
- */
-export async function apiRequest<T = unknown>(
-  config: GHLApiRequestConfig
-): Promise<T> {
-  const { method, endpoint, data, params, headers } = config;
-
-  logger.info(
-    { method, endpoint },
-    'GHL generic API request'
-  );
-
-  return await makeGHLRequest<T>(
-    endpoint,
-    method,
-    data,
-    params,
-    headers
-  ) as T;
-}
-
-// ============================================================================
-// CONTACTS
-// ============================================================================
-
-/**
- * Create a new contact
+ * Create contact (internal)
  */
 async function createContactInternal(
-  locationId: string,
-  contactData: {
-    firstName?: string;
-    lastName?: string;
-    email?: string;
-    phone?: string;
-    tags?: string[];
-    customFields?: Record<string, unknown>;
-    [key: string]: unknown;
-  }
+  contactData: Partial<GHLContact>,
+  options: GHLRequestOptions = {}
 ): Promise<GHLContact> {
-  logger.info({ locationId, email: contactData.email }, 'Creating GHL contact');
+  logger.info({ email: contactData.email }, 'Creating GHL contact');
 
-  return makeGHLRequest<GHLContact>(
-    '/contacts',
-    'POST',
-    { ...contactData, locationId }
+  const locationId = options.locationId || GHL_LOCATION_ID || contactData.locationId;
+  if (!locationId) {
+    throw new Error('locationId is required. Provide in options or contactData, or set GHL_LOCATION_ID env var.');
+  }
+
+  const result = await makeGHLRequest<{ contact: GHLContact }>(
+    '/contacts/',
+    {
+      ...options,
+      method: 'POST',
+      body: { ...contactData, locationId },
+    }
   );
+
+  logger.info({ contactId: result.contact.id }, 'GHL contact created');
+  return result.contact;
 }
 
 const createContactWithBreaker = createCircuitBreaker(createContactInternal, {
-  timeout: 10000,
-  name: 'ghl-create-contact',
+  timeout: 15000,
+  name: 'ghl.createContact',
 });
 
-const createContactRateLimited = withRateLimit(
-  (locationId: string, contactData: Parameters<typeof createContactInternal>[1]) =>
-    createContactWithBreaker.fire(locationId, contactData),
+/**
+ * Create a new contact in GoHighLevel
+ *
+ * @param contactData - Contact details including email, phone, name, etc.
+ * @param options - Request options including accessToken and locationId
+ * @returns Created contact object
+ *
+ * @example
+ * const contact = await createContact({
+ *   email: 'john@example.com',
+ *   firstName: 'John',
+ *   lastName: 'Doe',
+ *   phone: '+1234567890',
+ *   tags: ['lead', 'website']
+ * }, { accessToken: 'your-token', locationId: 'location-id' });
+ */
+export const createContact = withRateLimit(
+  (contactData: Partial<GHLContact>, options: GHLRequestOptions = {}) =>
+    createContactWithBreaker.fire(contactData, options),
   ghlRateLimiter
 );
 
-export async function createContact(
-  locationId: string,
-  contactData: Parameters<typeof createContactInternal>[1]
-): Promise<GHLContact> {
-  return (await createContactRateLimited(locationId, contactData)) as unknown as GHLContact;
-}
-
 /**
- * Get contact by ID
+ * Get contact by ID (internal)
  */
 async function getContactInternal(
-  locationId: string,
-  contactId: string
+  contactId: string,
+  options: GHLRequestOptions = {}
 ): Promise<GHLContact> {
-  logger.info({ locationId, contactId }, 'Getting GHL contact');
+  logger.info({ contactId }, 'Getting GHL contact');
 
-  return makeGHLRequest<GHLContact>(
+  const result = await makeGHLRequest<{ contact: GHLContact }>(
     `/contacts/${contactId}`,
-    'GET',
-    undefined,
-    { locationId }
+    { ...options, method: 'GET' }
   );
+
+  logger.info({ contactId: result.contact.id }, 'GHL contact retrieved');
+  return result.contact;
 }
 
 const getContactWithBreaker = createCircuitBreaker(getContactInternal, {
-  timeout: 10000,
-  name: 'ghl-get-contact',
+  timeout: 15000,
+  name: 'ghl.getContact',
 });
 
-const getContactRateLimited = withRateLimit(
-  (locationId: string, contactId: string) =>
-    getContactWithBreaker.fire(locationId, contactId),
+/**
+ * Get a contact by ID
+ *
+ * @param contactId - The contact ID
+ * @param options - Request options including accessToken
+ * @returns Contact object
+ *
+ * @example
+ * const contact = await getContact('contact-id', { accessToken: 'your-token' });
+ */
+export const getContact = withRateLimit(
+  (contactId: string, options: GHLRequestOptions = {}) =>
+    getContactWithBreaker.fire(contactId, options),
   ghlRateLimiter
 );
 
-export async function getContact(
-  locationId: string,
-  contactId: string
-): Promise<GHLContact> {
-  return (await getContactRateLimited(locationId, contactId)) as unknown as GHLContact;
-}
-
 /**
- * Update contact
+ * Update contact (internal)
  */
 async function updateContactInternal(
-  locationId: string,
   contactId: string,
-  updates: Partial<{
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string;
-    tags: string[];
-    customFields: Record<string, unknown>;
-    [key: string]: unknown;
-  }>
+  contactData: Partial<GHLContact>,
+  options: GHLRequestOptions = {}
 ): Promise<GHLContact> {
-  logger.info({ locationId, contactId }, 'Updating GHL contact');
+  logger.info({ contactId }, 'Updating GHL contact');
 
-  return makeGHLRequest<GHLContact>(
+  const result = await makeGHLRequest<{ contact: GHLContact }>(
     `/contacts/${contactId}`,
-    'PUT',
-    { ...updates, locationId }
+    {
+      ...options,
+      method: 'PUT',
+      body: contactData,
+    }
   );
+
+  logger.info({ contactId: result.contact.id }, 'GHL contact updated');
+  return result.contact;
 }
 
 const updateContactWithBreaker = createCircuitBreaker(updateContactInternal, {
-  timeout: 10000,
-  name: 'ghl-update-contact',
+  timeout: 15000,
+  name: 'ghl.updateContact',
 });
 
-const updateContactRateLimited = withRateLimit(
-  (locationId: string, contactId: string, updates: Parameters<typeof updateContactInternal>[2]) =>
-    updateContactWithBreaker.fire(locationId, contactId, updates),
-  ghlRateLimiter
-);
-
-export async function updateContact(
-  locationId: string,
-  contactId: string,
-  updates: Parameters<typeof updateContactInternal>[2]
-): Promise<GHLContact> {
-  return (await updateContactRateLimited(locationId, contactId, updates)) as unknown as GHLContact;
-}
-
 /**
- * Search/list contacts
+ * Update an existing contact
+ *
+ * @param contactId - The contact ID to update
+ * @param contactData - Updated contact fields
+ * @param options - Request options including accessToken
+ * @returns Updated contact object
+ *
+ * @example
+ * const contact = await updateContact('contact-id', {
+ *   firstName: 'Jane',
+ *   tags: ['customer', 'vip']
+ * }, { accessToken: 'your-token' });
  */
-async function searchContactsInternal(
-  locationId: string,
-  filters?: {
-    query?: string;
-    email?: string;
-    phone?: string;
-    limit?: number;
-    skip?: number;
-    [key: string]: unknown;
-  }
-): Promise<{ contacts: GHLContact[]; total: number }> {
-  logger.info({ locationId, filters }, 'Searching GHL contacts');
-
-  return await makeGHLRequest<{ contacts: GHLContact[]; total: number }>(
-    '/contacts',
-    'GET',
-    undefined,
-    { locationId, ...filters }
-  );
-}
-
-const searchContactsWithBreaker = createCircuitBreaker(searchContactsInternal, {
-  timeout: 10000,
-  name: 'ghl-search-contacts',
-});
-
-export const searchContacts = withRateLimit(
-  (locationId: string, filters?: Parameters<typeof searchContactsInternal>[1]) =>
-    searchContactsWithBreaker.fire(locationId, filters),
+export const updateContact = withRateLimit(
+  (contactId: string, contactData: Partial<GHLContact>, options: GHLRequestOptions = {}) =>
+    updateContactWithBreaker.fire(contactId, contactData, options),
   ghlRateLimiter
 );
 
 /**
- * Delete contact
+ * Delete contact (internal)
  */
 async function deleteContactInternal(
-  locationId: string,
-  contactId: string
+  contactId: string,
+  options: GHLRequestOptions = {}
 ): Promise<{ success: boolean }> {
-  logger.info({ locationId, contactId }, 'Deleting GHL contact');
+  logger.info({ contactId }, 'Deleting GHL contact');
 
   await makeGHLRequest(
     `/contacts/${contactId}`,
-    'DELETE',
-    undefined,
-    { locationId }
+    { ...options, method: 'DELETE' }
   );
 
+  logger.info({ contactId }, 'GHL contact deleted');
   return { success: true };
 }
 
 const deleteContactWithBreaker = createCircuitBreaker(deleteContactInternal, {
-  timeout: 10000,
-  name: 'ghl-delete-contact',
+  timeout: 15000,
+  name: 'ghl.deleteContact',
 });
 
+/**
+ * Delete a contact by ID
+ *
+ * @param contactId - The contact ID to delete
+ * @param options - Request options including accessToken
+ * @returns Success confirmation
+ *
+ * @example
+ * const result = await deleteContact('contact-id', { accessToken: 'your-token' });
+ */
 export const deleteContact = withRateLimit(
-  (locationId: string, contactId: string) =>
-    deleteContactWithBreaker.fire(locationId, contactId),
-  ghlRateLimiter
-);
-
-// ============================================================================
-// OPPORTUNITIES
-// ============================================================================
-
-/**
- * Create opportunity
- */
-async function createOpportunityInternal(
-  locationId: string,
-  opportunityData: {
-    pipelineId: string;
-    pipelineStageId: string;
-    name: string;
-    monetaryValue?: number;
-    contactId?: string;
-    status?: string;
-    assignedTo?: string;
-    [key: string]: unknown;
-  }
-): Promise<GHLOpportunity> {
-  logger.info({ locationId, name: opportunityData.name }, 'Creating GHL opportunity');
-
-  return await makeGHLRequest<GHLOpportunity>(
-    '/opportunities',
-    'POST',
-    { ...opportunityData, locationId }
-  );
-}
-
-const createOpportunityWithBreaker = createCircuitBreaker(createOpportunityInternal, {
-  timeout: 10000,
-  name: 'ghl-create-opportunity',
-});
-
-export const createOpportunity = withRateLimit(
-  (locationId: string, opportunityData: Parameters<typeof createOpportunityInternal>[1]) =>
-    createOpportunityWithBreaker.fire(locationId, opportunityData),
+  (contactId: string, options: GHLRequestOptions = {}) =>
+    deleteContactWithBreaker.fire(contactId, options),
   ghlRateLimiter
 );
 
 /**
- * Update opportunity
+ * Search contacts (internal)
  */
-async function updateOpportunityInternal(
-  locationId: string,
-  opportunityId: string,
-  updates: Partial<{
-    pipelineStageId: string;
-    name: string;
-    monetaryValue: number;
-    status: string;
-    assignedTo: string;
-    [key: string]: unknown;
-  }>
-): Promise<GHLOpportunity> {
-  logger.info({ locationId, opportunityId }, 'Updating GHL opportunity');
-
-  return await makeGHLRequest<GHLOpportunity>(
-    `/opportunities/${opportunityId}`,
-    'PUT',
-    { ...updates, locationId }
-  );
-}
-
-const updateOpportunityWithBreaker = createCircuitBreaker(updateOpportunityInternal, {
-  timeout: 10000,
-  name: 'ghl-update-opportunity',
-});
-
-export const updateOpportunity = withRateLimit(
-  (locationId: string, opportunityId: string, updates: Parameters<typeof updateOpportunityInternal>[2]) =>
-    updateOpportunityWithBreaker.fire(locationId, opportunityId, updates),
-  ghlRateLimiter
-);
-
-/**
- * List opportunities
- */
-async function listOpportunitiesInternal(
-  locationId: string,
-  filters?: {
-    pipelineId?: string;
-    pipelineStageId?: string;
-    assignedTo?: string;
+async function searchContactsInternal(
+  searchParams: {
+    locationId?: string;
+    query?: string;
+    email?: string;
+    phone?: string;
     limit?: number;
-    skip?: number;
-    [key: string]: unknown;
+  },
+  options: GHLRequestOptions = {}
+): Promise<GHLContact[]> {
+  logger.info({ searchParams }, 'Searching GHL contacts');
+
+  const locationId = searchParams.locationId || options.locationId || GHL_LOCATION_ID;
+  if (!locationId) {
+    throw new Error('locationId is required in searchParams, options, or set GHL_LOCATION_ID env var.');
   }
-): Promise<{ opportunities: GHLOpportunity[]; total: number }> {
-  logger.info({ locationId, filters }, 'Listing GHL opportunities');
 
-  return await makeGHLRequest<{ opportunities: GHLOpportunity[]; total: number }>(
-    '/opportunities',
-    'GET',
-    undefined,
-    { locationId, ...filters }
-  );
-}
+  const queryParams: Record<string, string> = {
+    locationId,
+    limit: String(searchParams.limit || 20),
+  };
 
-const listOpportunitiesWithBreaker = createCircuitBreaker(listOpportunitiesInternal, {
-  timeout: 10000,
-  name: 'ghl-list-opportunities',
-});
+  if (searchParams.query) queryParams.query = searchParams.query;
+  if (searchParams.email) queryParams.email = searchParams.email;
+  if (searchParams.phone) queryParams.phone = searchParams.phone;
 
-export const listOpportunities = withRateLimit(
-  (locationId: string, filters?: Parameters<typeof listOpportunitiesInternal>[1]) =>
-    listOpportunitiesWithBreaker.fire(locationId, filters),
-  ghlRateLimiter
-);
-
-// ============================================================================
-// COMMUNICATION
-// ============================================================================
-
-/**
- * Send SMS to contact
- */
-async function sendSMSInternal(
-  locationId: string,
-  contactId: string,
-  message: string,
-  options?: {
-    mediaUrl?: string;
-    [key: string]: unknown;
-  }
-): Promise<{ id: string; status: string }> {
-  logger.info({ locationId, contactId, messageLength: message.length }, 'Sending SMS via GHL');
-
-  return await makeGHLRequest<{ id: string; status: string }>(
-    '/conversations/messages',
-    'POST',
+  const result = await makeGHLRequest<{ contacts: GHLContact[] }>(
+    '/contacts/search',
     {
-      locationId,
-      contactId,
-      type: 'SMS',
-      message,
       ...options,
+      method: 'GET',
+      queryParams,
     }
   );
+
+  logger.info({ resultCount: result.contacts.length }, 'GHL contacts search completed');
+  return result.contacts;
 }
 
-const sendSMSWithBreaker = createCircuitBreaker(sendSMSInternal, {
-  timeout: 10000,
-  name: 'ghl-send-sms',
+const searchContactsWithBreaker = createCircuitBreaker(searchContactsInternal, {
+  timeout: 15000,
+  name: 'ghl.searchContacts',
 });
 
-export const sendSMS = withRateLimit(
-  (locationId: string, contactId: string, message: string, options?: Parameters<typeof sendSMSInternal>[3]) =>
-    sendSMSWithBreaker.fire(locationId, contactId, message, options),
-  ghlRateLimiter
-);
-
 /**
- * Send email to contact
+ * Search contacts by various criteria
+ *
+ * @param searchParams - Search parameters including query, email, phone, locationId
+ * @param options - Request options including accessToken
+ * @returns Array of matching contacts
+ *
+ * @example
+ * const contacts = await searchContacts({
+ *   locationId: 'location-id',
+ *   query: 'john@example.com',
+ *   limit: 10
+ * }, { accessToken: 'your-token' });
  */
-async function sendEmailInternal(
-  locationId: string,
-  contactId: string,
-  emailData: {
-    subject: string;
-    body: string;
-    fromEmail?: string;
-    fromName?: string;
-    attachments?: Array<{ url: string; name: string }>;
-    [key: string]: unknown;
-  }
-): Promise<{ id: string; status: string }> {
-  logger.info({ locationId, contactId, subject: emailData.subject }, 'Sending email via GHL');
-
-  return await makeGHLRequest<{ id: string; status: string }>(
-    '/conversations/messages',
-    'POST',
-    {
-      locationId,
-      contactId,
-      type: 'Email',
-      ...emailData,
-    }
-  );
-}
-
-const sendEmailWithBreaker = createCircuitBreaker(sendEmailInternal, {
-  timeout: 10000,
-  name: 'ghl-send-email',
-});
-
-export const sendEmail = withRateLimit(
-  (locationId: string, contactId: string, emailData: Parameters<typeof sendEmailInternal>[2]) =>
-    sendEmailWithBreaker.fire(locationId, contactId, emailData),
+export const searchContacts = withRateLimit(
+  (searchParams: Parameters<typeof searchContactsInternal>[0], options: GHLRequestOptions = {}) =>
+    searchContactsWithBreaker.fire(searchParams, options),
   ghlRateLimiter
 );
 
 // ============================================================================
-// APPOINTMENTS
+// CONVERSATIONS API
 // ============================================================================
 
 /**
- * Create appointment
+ * Get conversations for a contact (internal)
+ */
+async function getConversationsInternal(
+  contactId: string,
+  options: GHLRequestOptions = {}
+): Promise<GHLConversation[]> {
+  logger.info({ contactId }, 'Getting GHL conversations');
+
+  const result = await makeGHLRequest<{ conversations: GHLConversation[] }>(
+    `/conversations/search`,
+    {
+      ...options,
+      method: 'GET',
+      queryParams: { contactId },
+    }
+  );
+
+  logger.info({ conversationCount: result.conversations.length }, 'GHL conversations retrieved');
+  return result.conversations;
+}
+
+const getConversationsWithBreaker = createCircuitBreaker(getConversationsInternal, {
+  timeout: 15000,
+  name: 'ghl.getConversations',
+});
+
+/**
+ * Get all conversations for a contact
+ *
+ * @param contactId - The contact ID
+ * @param options - Request options including accessToken
+ * @returns Array of conversations
+ *
+ * @example
+ * const conversations = await getConversations('contact-id', { accessToken: 'your-token' });
+ */
+export const getConversations = withRateLimit(
+  (contactId: string, options: GHLRequestOptions = {}) =>
+    getConversationsWithBreaker.fire(contactId, options),
+  ghlRateLimiter
+);
+
+/**
+ * Send message (internal)
+ */
+async function sendMessageInternal(
+  messageData: {
+    contactId: string;
+    type: 'SMS' | 'Email' | 'WhatsApp';
+    message: string;
+    subject?: string;
+    html?: string;
+    conversationId?: string;
+  },
+  options: GHLRequestOptions = {}
+): Promise<GHLMessage> {
+  logger.info({ contactId: messageData.contactId, type: messageData.type }, 'Sending GHL message');
+
+  const result = await makeGHLRequest<{ message: GHLMessage }>(
+    '/conversations/messages',
+    {
+      ...options,
+      method: 'POST',
+      body: messageData,
+    }
+  );
+
+  logger.info({ messageId: result.message.id }, 'GHL message sent');
+  return result.message;
+}
+
+const sendMessageWithBreaker = createCircuitBreaker(sendMessageInternal, {
+  timeout: 15000,
+  name: 'ghl.sendMessage',
+});
+
+/**
+ * Send a message to a contact (SMS, Email, or WhatsApp)
+ *
+ * @param messageData - Message details including contactId, type, and message content
+ * @param options - Request options including accessToken
+ * @returns Sent message object
+ *
+ * @example
+ * // Send SMS
+ * const message = await sendMessage({
+ *   contactId: 'contact-id',
+ *   type: 'SMS',
+ *   message: 'Hello from GHL!'
+ * }, { accessToken: 'your-token' });
+ *
+ * @example
+ * // Send Email
+ * const email = await sendMessage({
+ *   contactId: 'contact-id',
+ *   type: 'Email',
+ *   subject: 'Welcome!',
+ *   message: 'Welcome to our service!',
+ *   html: '<h1>Welcome!</h1><p>Welcome to our service!</p>'
+ * }, { accessToken: 'your-token' });
+ */
+export const sendMessage = withRateLimit(
+  (messageData: Parameters<typeof sendMessageInternal>[0], options: GHLRequestOptions = {}) =>
+    sendMessageWithBreaker.fire(messageData, options),
+  ghlRateLimiter
+);
+
+/**
+ * Get messages from a conversation (internal)
+ */
+async function getMessagesInternal(
+  conversationId: string,
+  options: GHLRequestOptions & { limit?: number } = {}
+): Promise<GHLMessage[]> {
+  logger.info({ conversationId }, 'Getting GHL messages');
+
+  const queryParams: Record<string, string> = {};
+  if (options.limit) queryParams.limit = String(options.limit);
+
+  const result = await makeGHLRequest<{ messages: GHLMessage[] }>(
+    `/conversations/${conversationId}/messages`,
+    {
+      ...options,
+      method: 'GET',
+      queryParams,
+    }
+  );
+
+  logger.info({ messageCount: result.messages.length }, 'GHL messages retrieved');
+  return result.messages;
+}
+
+const getMessagesWithBreaker = createCircuitBreaker(getMessagesInternal, {
+  timeout: 15000,
+  name: 'ghl.getMessages',
+});
+
+/**
+ * Get all messages from a conversation
+ *
+ * @param conversationId - The conversation ID
+ * @param options - Request options including accessToken and optional limit
+ * @returns Array of messages
+ *
+ * @example
+ * const messages = await getMessages('conversation-id', {
+ *   accessToken: 'your-token',
+ *   limit: 50
+ * });
+ */
+export const getMessages = withRateLimit(
+  (conversationId: string, options: GHLRequestOptions & { limit?: number } = {}) =>
+    getMessagesWithBreaker.fire(conversationId, options),
+  ghlRateLimiter
+);
+
+// ============================================================================
+// CALENDAR & APPOINTMENTS API
+// ============================================================================
+
+/**
+ * Get calendars (internal)
+ */
+async function getCalendarsInternal(
+  locationId: string,
+  options: GHLRequestOptions = {}
+): Promise<GHLCalendar[]> {
+  logger.info({ locationId }, 'Getting GHL calendars');
+
+  const result = await makeGHLRequest<{ calendars: GHLCalendar[] }>(
+    '/calendars/',
+    {
+      ...options,
+      method: 'GET',
+      queryParams: { locationId },
+    }
+  );
+
+  logger.info({ calendarCount: result.calendars.length }, 'GHL calendars retrieved');
+  return result.calendars;
+}
+
+const getCalendarsWithBreaker = createCircuitBreaker(getCalendarsInternal, {
+  timeout: 15000,
+  name: 'ghl.getCalendars',
+});
+
+/**
+ * Get all calendars for a location
+ *
+ * @param locationId - The location ID
+ * @param options - Request options including accessToken
+ * @returns Array of calendars
+ *
+ * @example
+ * const calendars = await getCalendars('location-id', { accessToken: 'your-token' });
+ */
+export const getCalendars = withRateLimit(
+  (locationId: string, options: GHLRequestOptions = {}) =>
+    getCalendarsWithBreaker.fire(locationId, options),
+  ghlRateLimiter
+);
+
+/**
+ * Create appointment (internal)
  */
 async function createAppointmentInternal(
-  locationId: string,
-  appointmentData: {
-    calendarId: string;
-    contactId: string;
-    startTime: string; // ISO 8601
-    endTime: string;   // ISO 8601
-    title: string;
-    notes?: string;
-    assignedTo?: string;
-    [key: string]: unknown;
-  }
+  appointmentData: Partial<GHLAppointment>,
+  options: GHLRequestOptions = {}
 ): Promise<GHLAppointment> {
-  logger.info({ locationId, title: appointmentData.title }, 'Creating GHL appointment');
+  logger.info({ calendarId: appointmentData.calendarId }, 'Creating GHL appointment');
 
-  return await makeGHLRequest<GHLAppointment>(
-    '/appointments',
-    'POST',
-    { ...appointmentData, locationId }
+  const result = await makeGHLRequest<{ appointment: GHLAppointment }>(
+    '/appointments/',
+    {
+      ...options,
+      method: 'POST',
+      body: appointmentData,
+    }
   );
+
+  logger.info({ appointmentId: result.appointment.id }, 'GHL appointment created');
+  return result.appointment;
 }
 
 const createAppointmentWithBreaker = createCircuitBreaker(createAppointmentInternal, {
-  timeout: 10000,
-  name: 'ghl-create-appointment',
+  timeout: 15000,
+  name: 'ghl.createAppointment',
 });
 
+/**
+ * Create a new appointment
+ *
+ * @param appointmentData - Appointment details including calendarId, contactId, startTime, endTime
+ * @param options - Request options including accessToken
+ * @returns Created appointment object
+ *
+ * @example
+ * const appointment = await createAppointment({
+ *   calendarId: 'calendar-id',
+ *   contactId: 'contact-id',
+ *   locationId: 'location-id',
+ *   title: 'Consultation',
+ *   startTime: '2025-01-15T10:00:00Z',
+ *   endTime: '2025-01-15T11:00:00Z',
+ *   appointmentStatus: 'confirmed'
+ * }, { accessToken: 'your-token' });
+ */
 export const createAppointment = withRateLimit(
-  (locationId: string, appointmentData: Parameters<typeof createAppointmentInternal>[1]) =>
-    createAppointmentWithBreaker.fire(locationId, appointmentData),
+  (appointmentData: Partial<GHLAppointment>, options: GHLRequestOptions = {}) =>
+    createAppointmentWithBreaker.fire(appointmentData, options),
   ghlRateLimiter
 );
 
 /**
- * List appointments
+ * Get appointment by ID (internal)
  */
-async function listAppointmentsInternal(
-  locationId: string,
-  filters?: {
-    contactId?: string;
-    calendarId?: string;
-    startDate?: string;
-    endDate?: string;
-    limit?: number;
-    [key: string]: unknown;
-  }
-): Promise<{ appointments: GHLAppointment[]; total: number }> {
-  logger.info({ locationId, filters }, 'Listing GHL appointments');
+async function getAppointmentInternal(
+  appointmentId: string,
+  options: GHLRequestOptions = {}
+): Promise<GHLAppointment> {
+  logger.info({ appointmentId }, 'Getting GHL appointment');
 
-  return await makeGHLRequest<{ appointments: GHLAppointment[]; total: number }>(
-    '/appointments',
-    'GET',
-    undefined,
-    { locationId, ...filters }
+  const result = await makeGHLRequest<{ appointment: GHLAppointment }>(
+    `/appointments/${appointmentId}`,
+    { ...options, method: 'GET' }
   );
+
+  logger.info({ appointmentId: result.appointment.id }, 'GHL appointment retrieved');
+  return result.appointment;
 }
 
-const listAppointmentsWithBreaker = createCircuitBreaker(listAppointmentsInternal, {
-  timeout: 10000,
-  name: 'ghl-list-appointments',
+const getAppointmentWithBreaker = createCircuitBreaker(getAppointmentInternal, {
+  timeout: 15000,
+  name: 'ghl.getAppointment',
 });
 
-export const listAppointments = withRateLimit(
-  (locationId: string, filters?: Parameters<typeof listAppointmentsInternal>[1]) =>
-    listAppointmentsWithBreaker.fire(locationId, filters),
+/**
+ * Get an appointment by ID
+ *
+ * @param appointmentId - The appointment ID
+ * @param options - Request options including accessToken
+ * @returns Appointment object
+ *
+ * @example
+ * const appointment = await getAppointment('appointment-id', { accessToken: 'your-token' });
+ */
+export const getAppointment = withRateLimit(
+  (appointmentId: string, options: GHLRequestOptions = {}) =>
+    getAppointmentWithBreaker.fire(appointmentId, options),
+  ghlRateLimiter
+);
+
+/**
+ * Update appointment (internal)
+ */
+async function updateAppointmentInternal(
+  appointmentId: string,
+  appointmentData: Partial<GHLAppointment>,
+  options: GHLRequestOptions = {}
+): Promise<GHLAppointment> {
+  logger.info({ appointmentId }, 'Updating GHL appointment');
+
+  const result = await makeGHLRequest<{ appointment: GHLAppointment }>(
+    `/appointments/${appointmentId}`,
+    {
+      ...options,
+      method: 'PUT',
+      body: appointmentData,
+    }
+  );
+
+  logger.info({ appointmentId: result.appointment.id }, 'GHL appointment updated');
+  return result.appointment;
+}
+
+const updateAppointmentWithBreaker = createCircuitBreaker(updateAppointmentInternal, {
+  timeout: 15000,
+  name: 'ghl.updateAppointment',
+});
+
+/**
+ * Update an existing appointment
+ *
+ * @param appointmentId - The appointment ID to update
+ * @param appointmentData - Updated appointment fields
+ * @param options - Request options including accessToken
+ * @returns Updated appointment object
+ *
+ * @example
+ * const appointment = await updateAppointment('appointment-id', {
+ *   appointmentStatus: 'confirmed',
+ *   notes: 'Client confirmed attendance'
+ * }, { accessToken: 'your-token' });
+ */
+export const updateAppointment = withRateLimit(
+  (appointmentId: string, appointmentData: Partial<GHLAppointment>, options: GHLRequestOptions = {}) =>
+    updateAppointmentWithBreaker.fire(appointmentId, appointmentData, options),
   ghlRateLimiter
 );
 
 // ============================================================================
-// TAGS
+// OPPORTUNITIES (PIPELINE) API
 // ============================================================================
 
 /**
- * Get all tags for location
+ * Get pipelines (internal)
  */
-async function getTagsInternal(locationId: string): Promise<{ tags: GHLTag[] }> {
+async function getPipelinesInternal(
+  locationId: string,
+  options: GHLRequestOptions = {}
+): Promise<GHLPipeline[]> {
+  logger.info({ locationId }, 'Getting GHL pipelines');
+
+  const result = await makeGHLRequest<{ pipelines: GHLPipeline[] }>(
+    '/opportunities/pipelines',
+    {
+      ...options,
+      method: 'GET',
+      queryParams: { locationId },
+    }
+  );
+
+  logger.info({ pipelineCount: result.pipelines.length }, 'GHL pipelines retrieved');
+  return result.pipelines;
+}
+
+const getPipelinesWithBreaker = createCircuitBreaker(getPipelinesInternal, {
+  timeout: 15000,
+  name: 'ghl.getPipelines',
+});
+
+/**
+ * Get all sales pipelines for a location
+ *
+ * @param locationId - The location ID
+ * @param options - Request options including accessToken
+ * @returns Array of pipelines with stages
+ *
+ * @example
+ * const pipelines = await getPipelines('location-id', { accessToken: 'your-token' });
+ */
+export const getPipelines = withRateLimit(
+  (locationId: string, options: GHLRequestOptions = {}) =>
+    getPipelinesWithBreaker.fire(locationId, options),
+  ghlRateLimiter
+);
+
+/**
+ * Create opportunity (internal)
+ */
+async function createOpportunityInternal(
+  opportunityData: Partial<GHLOpportunity>,
+  options: GHLRequestOptions = {}
+): Promise<GHLOpportunity> {
+  logger.info({ name: opportunityData.name }, 'Creating GHL opportunity');
+
+  const locationId = options.locationId || GHL_LOCATION_ID || opportunityData.locationId;
+  if (!locationId) {
+    throw new Error('locationId is required. Provide in options or opportunityData, or set GHL_LOCATION_ID env var.');
+  }
+
+  const result = await makeGHLRequest<{ opportunity: GHLOpportunity }>(
+    '/opportunities/',
+    {
+      ...options,
+      method: 'POST',
+      body: { ...opportunityData, locationId },
+    }
+  );
+
+  logger.info({ opportunityId: result.opportunity.id }, 'GHL opportunity created');
+  return result.opportunity;
+}
+
+const createOpportunityWithBreaker = createCircuitBreaker(createOpportunityInternal, {
+  timeout: 15000,
+  name: 'ghl.createOpportunity',
+});
+
+/**
+ * Create a new sales opportunity
+ *
+ * @param opportunityData - Opportunity details including name, pipelineId, pipelineStageId, contactId
+ * @param options - Request options including accessToken and locationId
+ * @returns Created opportunity object
+ *
+ * @example
+ * const opportunity = await createOpportunity({
+ *   name: 'New Enterprise Deal',
+ *   pipelineId: 'pipeline-id',
+ *   pipelineStageId: 'stage-id',
+ *   contactId: 'contact-id',
+ *   monetaryValue: 50000,
+ *   status: 'open'
+ * }, { accessToken: 'your-token', locationId: 'location-id' });
+ */
+export const createOpportunity = withRateLimit(
+  (opportunityData: Partial<GHLOpportunity>, options: GHLRequestOptions = {}) =>
+    createOpportunityWithBreaker.fire(opportunityData, options),
+  ghlRateLimiter
+);
+
+/**
+ * Get opportunity by ID (internal)
+ */
+async function getOpportunityInternal(
+  opportunityId: string,
+  options: GHLRequestOptions = {}
+): Promise<GHLOpportunity> {
+  logger.info({ opportunityId }, 'Getting GHL opportunity');
+
+  const result = await makeGHLRequest<{ opportunity: GHLOpportunity }>(
+    `/opportunities/${opportunityId}`,
+    { ...options, method: 'GET' }
+  );
+
+  logger.info({ opportunityId: result.opportunity.id }, 'GHL opportunity retrieved');
+  return result.opportunity;
+}
+
+const getOpportunityWithBreaker = createCircuitBreaker(getOpportunityInternal, {
+  timeout: 15000,
+  name: 'ghl.getOpportunity',
+});
+
+/**
+ * Get an opportunity by ID
+ *
+ * @param opportunityId - The opportunity ID
+ * @param options - Request options including accessToken
+ * @returns Opportunity object
+ *
+ * @example
+ * const opportunity = await getOpportunity('opportunity-id', { accessToken: 'your-token' });
+ */
+export const getOpportunity = withRateLimit(
+  (opportunityId: string, options: GHLRequestOptions = {}) =>
+    getOpportunityWithBreaker.fire(opportunityId, options),
+  ghlRateLimiter
+);
+
+/**
+ * Update opportunity (internal)
+ */
+async function updateOpportunityInternal(
+  opportunityId: string,
+  opportunityData: Partial<GHLOpportunity>,
+  options: GHLRequestOptions = {}
+): Promise<GHLOpportunity> {
+  logger.info({ opportunityId }, 'Updating GHL opportunity');
+
+  const result = await makeGHLRequest<{ opportunity: GHLOpportunity }>(
+    `/opportunities/${opportunityId}`,
+    {
+      ...options,
+      method: 'PUT',
+      body: opportunityData,
+    }
+  );
+
+  logger.info({ opportunityId: result.opportunity.id }, 'GHL opportunity updated');
+  return result.opportunity;
+}
+
+const updateOpportunityWithBreaker = createCircuitBreaker(updateOpportunityInternal, {
+  timeout: 15000,
+  name: 'ghl.updateOpportunity',
+});
+
+/**
+ * Update an existing opportunity
+ *
+ * @param opportunityId - The opportunity ID to update
+ * @param opportunityData - Updated opportunity fields
+ * @param options - Request options including accessToken
+ * @returns Updated opportunity object
+ *
+ * @example
+ * const opportunity = await updateOpportunity('opportunity-id', {
+ *   pipelineStageId: 'new-stage-id',
+ *   monetaryValue: 75000,
+ *   status: 'won'
+ * }, { accessToken: 'your-token' });
+ */
+export const updateOpportunity = withRateLimit(
+  (opportunityId: string, opportunityData: Partial<GHLOpportunity>, options: GHLRequestOptions = {}) =>
+    updateOpportunityWithBreaker.fire(opportunityId, opportunityData, options),
+  ghlRateLimiter
+);
+
+/**
+ * Delete opportunity (internal)
+ */
+async function deleteOpportunityInternal(
+  opportunityId: string,
+  options: GHLRequestOptions = {}
+): Promise<{ success: boolean }> {
+  logger.info({ opportunityId }, 'Deleting GHL opportunity');
+
+  await makeGHLRequest(
+    `/opportunities/${opportunityId}`,
+    { ...options, method: 'DELETE' }
+  );
+
+  logger.info({ opportunityId }, 'GHL opportunity deleted');
+  return { success: true };
+}
+
+const deleteOpportunityWithBreaker = createCircuitBreaker(deleteOpportunityInternal, {
+  timeout: 15000,
+  name: 'ghl.deleteOpportunity',
+});
+
+/**
+ * Delete an opportunity by ID
+ *
+ * @param opportunityId - The opportunity ID to delete
+ * @param options - Request options including accessToken
+ * @returns Success confirmation
+ *
+ * @example
+ * const result = await deleteOpportunity('opportunity-id', { accessToken: 'your-token' });
+ */
+export const deleteOpportunity = withRateLimit(
+  (opportunityId: string, options: GHLRequestOptions = {}) =>
+    deleteOpportunityWithBreaker.fire(opportunityId, options),
+  ghlRateLimiter
+);
+
+// ============================================================================
+// TAGS API
+// ============================================================================
+
+/**
+ * Get tags (internal)
+ */
+async function getTagsInternal(
+  locationId: string,
+  options: GHLRequestOptions = {}
+): Promise<GHLTag[]> {
   logger.info({ locationId }, 'Getting GHL tags');
 
-  return await makeGHLRequest<{ tags: GHLTag[] }>(
-    '/tags',
-    'GET',
-    undefined,
-    { locationId }
+  const result = await makeGHLRequest<{ tags: GHLTag[] }>(
+    '/tags/',
+    {
+      ...options,
+      method: 'GET',
+      queryParams: { locationId },
+    }
   );
+
+  logger.info({ tagCount: result.tags.length }, 'GHL tags retrieved');
+  return result.tags;
 }
 
 const getTagsWithBreaker = createCircuitBreaker(getTagsInternal, {
-  timeout: 10000,
-  name: 'ghl-get-tags',
+  timeout: 15000,
+  name: 'ghl.getTags',
 });
 
+/**
+ * Get all tags for a location
+ *
+ * @param locationId - The location ID
+ * @param options - Request options including accessToken
+ * @returns Array of tags
+ *
+ * @example
+ * const tags = await getTags('location-id', { accessToken: 'your-token' });
+ */
 export const getTags = withRateLimit(
-  (locationId: string) => getTagsWithBreaker.fire(locationId),
+  (locationId: string, options: GHLRequestOptions = {}) =>
+    getTagsWithBreaker.fire(locationId, options),
   ghlRateLimiter
 );
 
 /**
- * Add tag to contact
+ * Add tag to contact (internal)
  */
 async function addTagToContactInternal(
-  locationId: string,
   contactId: string,
-  tagId: string
+  tagId: string,
+  options: GHLRequestOptions = {}
 ): Promise<{ success: boolean }> {
-  logger.info({ locationId, contactId, tagId }, 'Adding tag to GHL contact');
+  logger.info({ contactId, tagId }, 'Adding tag to GHL contact');
 
   await makeGHLRequest(
     `/contacts/${contactId}/tags`,
-    'POST',
-    { tagId, locationId }
+    {
+      ...options,
+      method: 'POST',
+      body: { tagId },
+    }
   );
 
+  logger.info({ contactId, tagId }, 'Tag added to GHL contact');
   return { success: true };
 }
 
 const addTagToContactWithBreaker = createCircuitBreaker(addTagToContactInternal, {
-  timeout: 10000,
-  name: 'ghl-add-tag',
+  timeout: 15000,
+  name: 'ghl.addTagToContact',
 });
 
+/**
+ * Add a tag to a contact
+ *
+ * @param contactId - The contact ID
+ * @param tagId - The tag ID to add
+ * @param options - Request options including accessToken
+ * @returns Success confirmation
+ *
+ * @example
+ * const result = await addTagToContact('contact-id', 'tag-id', { accessToken: 'your-token' });
+ */
 export const addTagToContact = withRateLimit(
-  (locationId: string, contactId: string, tagId: string) =>
-    addTagToContactWithBreaker.fire(locationId, contactId, tagId),
+  (contactId: string, tagId: string, options: GHLRequestOptions = {}) =>
+    addTagToContactWithBreaker.fire(contactId, tagId, options),
   ghlRateLimiter
 );
 
 /**
- * Remove tag from contact
+ * Remove tag from contact (internal)
  */
 async function removeTagFromContactInternal(
-  locationId: string,
   contactId: string,
-  tagId: string
+  tagId: string,
+  options: GHLRequestOptions = {}
 ): Promise<{ success: boolean }> {
-  logger.info({ locationId, contactId, tagId }, 'Removing tag from GHL contact');
+  logger.info({ contactId, tagId }, 'Removing tag from GHL contact');
 
   await makeGHLRequest(
     `/contacts/${contactId}/tags/${tagId}`,
-    'DELETE',
-    undefined,
-    { locationId }
+    { ...options, method: 'DELETE' }
   );
 
+  logger.info({ contactId, tagId }, 'Tag removed from GHL contact');
   return { success: true };
 }
 
 const removeTagFromContactWithBreaker = createCircuitBreaker(removeTagFromContactInternal, {
-  timeout: 10000,
-  name: 'ghl-remove-tag',
+  timeout: 15000,
+  name: 'ghl.removeTagFromContact',
 });
 
+/**
+ * Remove a tag from a contact
+ *
+ * @param contactId - The contact ID
+ * @param tagId - The tag ID to remove
+ * @param options - Request options including accessToken
+ * @returns Success confirmation
+ *
+ * @example
+ * const result = await removeTagFromContact('contact-id', 'tag-id', { accessToken: 'your-token' });
+ */
 export const removeTagFromContact = withRateLimit(
-  (locationId: string, contactId: string, tagId: string) =>
-    removeTagFromContactWithBreaker.fire(locationId, contactId, tagId),
+  (contactId: string, tagId: string, options: GHLRequestOptions = {}) =>
+    removeTagFromContactWithBreaker.fire(contactId, tagId, options),
   ghlRateLimiter
 );
 
 // ============================================================================
-// CUSTOM FIELDS
+// CUSTOM FIELDS API
 // ============================================================================
 
 /**
- * Update custom field value for contact
+ * Get custom fields (internal)
  */
-async function updateCustomFieldInternal(
+async function getCustomFieldsInternal(
   locationId: string,
-  contactId: string,
-  fieldId: string,
-  value: unknown
-): Promise<{ success: boolean }> {
-  logger.info({ locationId, contactId, fieldId }, 'Updating GHL custom field');
+  options: GHLRequestOptions = {}
+): Promise<GHLCustomField[]> {
+  logger.info({ locationId }, 'Getting GHL custom fields');
 
-  await makeGHLRequest(
-    `/contacts/${contactId}/customFields`,
-    'PUT',
-    { locationId, customFields: { [fieldId]: value } }
-  );
-
-  return { success: true };
-}
-
-const updateCustomFieldWithBreaker = createCircuitBreaker(updateCustomFieldInternal, {
-  timeout: 10000,
-  name: 'ghl-update-custom-field',
-});
-
-export const updateCustomField = withRateLimit(
-  (locationId: string, contactId: string, fieldId: string, value: unknown) =>
-    updateCustomFieldWithBreaker.fire(locationId, contactId, fieldId, value),
-  ghlRateLimiter
-);
-
-// ============================================================================
-// WORKFLOWS
-// ============================================================================
-
-/**
- * Trigger a workflow for a contact
- */
-async function triggerWorkflowInternal(
-  locationId: string,
-  workflowId: string,
-  contactId: string,
-  eventData?: Record<string, unknown>
-): Promise<{ success: boolean; executionId?: string }> {
-  logger.info({ locationId, workflowId, contactId }, 'Triggering GHL workflow');
-
-  const result = await makeGHLRequest<{ success: boolean; executionId?: string }>(
-    `/workflows/${workflowId}/trigger`,
-    'POST',
+  const result = await makeGHLRequest<{ customFields: GHLCustomField[] }>(
+    '/custom-fields/',
     {
-      locationId,
-      contactId,
-      eventData,
+      ...options,
+      method: 'GET',
+      queryParams: { locationId },
     }
   );
 
-  return result;
+  logger.info({ fieldCount: result.customFields.length }, 'GHL custom fields retrieved');
+  return result.customFields;
 }
 
-const triggerWorkflowWithBreaker = createCircuitBreaker(triggerWorkflowInternal, {
-  timeout: 10000,
-  name: 'ghl-trigger-workflow',
+const getCustomFieldsWithBreaker = createCircuitBreaker(getCustomFieldsInternal, {
+  timeout: 15000,
+  name: 'ghl.getCustomFields',
 });
 
-export const triggerWorkflow = withRateLimit(
-  (locationId: string, workflowId: string, contactId: string, eventData?: Record<string, unknown>) =>
-    triggerWorkflowWithBreaker.fire(locationId, workflowId, contactId, eventData),
+/**
+ * Get all custom fields for a location
+ *
+ * @param locationId - The location ID
+ * @param options - Request options including accessToken
+ * @returns Array of custom field definitions
+ *
+ * @example
+ * const fields = await getCustomFields('location-id', { accessToken: 'your-token' });
+ */
+export const getCustomFields = withRateLimit(
+  (locationId: string, options: GHLRequestOptions = {}) =>
+    getCustomFieldsWithBreaker.fire(locationId, options),
+  ghlRateLimiter
+);
+
+// ============================================================================
+// LOCATIONS API
+// ============================================================================
+
+/**
+ * Get location by ID (internal)
+ */
+async function getLocationInternal(
+  locationId: string,
+  options: GHLRequestOptions = {}
+): Promise<GHLLocation> {
+  logger.info({ locationId }, 'Getting GHL location');
+
+  const result = await makeGHLRequest<{ location: GHLLocation }>(
+    `/locations/${locationId}`,
+    { ...options, method: 'GET' }
+  );
+
+  logger.info({ locationId: result.location.id }, 'GHL location retrieved');
+  return result.location;
+}
+
+const getLocationWithBreaker = createCircuitBreaker(getLocationInternal, {
+  timeout: 15000,
+  name: 'ghl.getLocation',
+});
+
+/**
+ * Get location details by ID
+ *
+ * @param locationId - The location ID
+ * @param options - Request options including accessToken
+ * @returns Location object with details
+ *
+ * @example
+ * const location = await getLocation('location-id', { accessToken: 'your-token' });
+ */
+export const getLocation = withRateLimit(
+  (locationId: string, options: GHLRequestOptions = {}) =>
+    getLocationWithBreaker.fire(locationId, options),
   ghlRateLimiter
 );

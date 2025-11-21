@@ -29,6 +29,76 @@
       "when": 1762384034957,
       "tag": "0003_handy_glorian",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1762425376000,
+      "tag": "0004_make_workflow_org_id_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1731356912000,
+      "tag": "0005_add_tweet_replies_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1731357000000,
+      "tag": "0006_add_foreign_key_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1731425000000,
+      "tag": "0007_add_composite_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1731426000000,
+      "tag": "0008_denormalize_organization_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1762971443366,
+      "tag": "0009_add_chat_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1763050181045,
+      "tag": "0010_odd_sir_ram",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1763100320979,
+      "tag": "0011_nosy_leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1763105169134,
+      "tag": "0012_curvy_zaladane",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1763529487973,
+      "tag": "0013_many_diamondback",
+      "breakpoints": true
     }
   ]
 }

@@ -4,7 +4,7 @@ export interface WorkflowListItem {
   description: string | null;
   status: string;
   trigger: {
-    type: 'manual' | 'cron' | 'webhook' | 'telegram' | 'discord' | 'chat';
+    type: 'manual' | 'cron' | 'webhook' | 'telegram' | 'discord' | 'chat' | 'chat-input' | 'gmail' | 'outlook';
     config: Record<string, unknown>;
   };
   config: Record<string, unknown>;
@@ -13,6 +13,7 @@ export interface WorkflowListItem {
   lastRunStatus: string | null;
   lastRunOutput: unknown | null;
   runCount: number;
+  conversationCount?: number;
 }
 
 export interface CredentialListItem {

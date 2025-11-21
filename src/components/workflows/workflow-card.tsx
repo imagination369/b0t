@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback, useMemo, memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Download, Trash2, Play, Key, MessageSquare, Sliders, BarChart3, Pencil, Clock, Webhook, Send } from 'lucide-react';
+import { Download, Trash2, Play, Key, MessageSquare, Sliders, BarChart3, Pencil, Clock, Webhook, Send, FormInput, Mail } from 'lucide-react';
 import { WorkflowListItem } from '@/types/workflows';
 import { WorkflowExecutionDialog } from './workflow-execution-dialog';
 import { CredentialsConfigDialog } from './credentials-config-dialog';
@@ -16,6 +16,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { formatDate } from '@/lib/format-utils';
+import { logger } from '@/lib/logger';
 
 interface WorkflowCardProps {
   workflow: WorkflowListItem;
@@ -24,7 +26,7 @@ interface WorkflowCardProps {
   onUpdated?: () => void;
 }
 
-export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: WorkflowCardProps) {
+export const WorkflowCard = memo(function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: WorkflowCardProps) {
   const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [optimisticStatus, setOptimisticStatus] = useState<string | null>(null);
@@ -37,21 +39,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
   const [editDescription, setEditDescription] = useState(workflow.description || '');
   const [saving, setSaving] = useState(false);
 
-  const handleDelete = async () => {
-    toast(`Delete "${workflow.name}"?`, {
-      description: 'This cannot be undone.',
-      action: {
-        label: 'Delete',
-        onClick: () => performDelete(),
-      },
-      cancel: {
-        label: 'Cancel',
-        onClick: () => {},
-      },
-    });
-  };
-
-  const performDelete = async () => {
+  const performDelete = useCallback(async () => {
     setDeleting(true);
     try {
       const response = await fetch(`/api/workflows/${workflow.id}`, {
@@ -65,14 +53,28 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
       toast.success('Workflow deleted');
       onDeleted();
     } catch (error) {
-      console.error('Error deleting workflow:', error);
+      logger.error({ error }, 'Error deleting workflow');
       toast.error('Failed to delete workflow');
     } finally {
       setDeleting(false);
     }
-  };
+  }, [workflow.id, onDeleted]);
 
-  const handleToggleStatus = async (checked: boolean) => {
+  const handleDelete = useCallback(async () => {
+    toast(`Delete "${workflow.name}"?`, {
+      description: 'This cannot be undone.',
+      action: {
+        label: 'Delete',
+        onClick: () => performDelete(),
+      },
+      cancel: {
+        label: 'Cancel',
+        onClick: () => {},
+      },
+    });
+  }, [workflow.name, performDelete]);
+
+  const handleToggleStatus = useCallback(async (checked: boolean) => {
     const newStatus = checked ? 'active' : 'draft';
     setToggling(true);
     setOptimisticStatus(newStatus);
@@ -91,19 +93,45 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
       toast.success(`Workflow ${checked ? 'activated' : 'deactivated'}`);
       onUpdated?.();
     } catch (error) {
-      console.error('Error updating workflow status:', error);
+      logger.error({ error }, 'Error updating workflow status');
       toast.error('Failed to update workflow status');
       setOptimisticStatus(null);
     } finally {
       setToggling(false);
     }
-  };
+  }, [workflow.id, onUpdated]);
 
-  const handleRunClick = () => {
+  const handleRunClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
     setExecutionDialogOpen(true);
-  };
+  }, []);
 
-  const handleSaveEdit = async () => {
+  const handleEditClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
+    setEditDialogOpen(true);
+  }, []);
+
+  const handleExportClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
+    onExport(workflow.id);
+  }, [onExport, workflow.id]);
+
+  const handleSettingsClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
+    setSettingsDialogOpen(true);
+  }, []);
+
+  const handleCredentialsClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
+    setCredentialsConfigOpen(true);
+  }, []);
+
+  const handleOutputsClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
+    setOutputsDialogOpen(true);
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
     if (!editName.trim()) {
       toast.error('Workflow name is required');
       return;
@@ -128,12 +156,12 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
       setEditDialogOpen(false);
       onUpdated?.();
     } catch (error) {
-      console.error('Error updating workflow:', error);
+      logger.error({ error }, 'Error updating workflow');
       toast.error('Failed to update workflow');
     } finally {
       setSaving(false);
     }
-  };
+  }, [workflow.id, editName, editDescription, onUpdated]);
 
   const getStatusBadgeVariant = (status: string): 'gradient-success' | 'gradient-warning' | 'gradient-error' | 'outline' => {
     switch (status) {
@@ -149,48 +177,50 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
     }
   };
 
-  const formatDate = (date: Date | string | null) => {
-    if (!date) return 'Never';
-    const d = typeof date === 'string' ? new Date(date) : date;
-    return d.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const getTriggerIcon = () => {
+  const TriggerIcon = useMemo(() => {
     switch (workflow.trigger.type) {
       case 'chat':
         return MessageSquare;
+      case 'chat-input':
+        return FormInput;
       case 'cron':
         return Clock;
       case 'webhook':
         return Webhook;
+      case 'gmail':
+      case 'outlook':
+        return Mail;
       case 'telegram':
       case 'discord':
         return Send;
       default:
         return Play;
     }
-  };
+  }, [workflow.trigger.type]);
 
-  const runButtonConfig = (() => {
+  const runButtonConfig = useMemo(() => {
     switch (workflow.trigger.type) {
       case 'chat':
         return { label: 'Chat', icon: MessageSquare };
+      case 'chat-input':
+        return { label: 'Run', icon: FormInput };
       case 'cron':
         return { label: 'Run Now', icon: Play };
       case 'webhook':
         return { label: 'Test', icon: Play };
+      case 'gmail':
+        return { label: 'Gmail', icon: Mail };
+      case 'outlook':
+        return { label: 'Outlook', icon: Mail };
+      case 'telegram':
+        return { label: 'Telegram', icon: Send };
+      case 'discord':
+        return { label: 'Discord', icon: Send };
       default:
         return { label: 'Run', icon: Play };
     }
-  })();
+  }, [workflow.trigger.type]);
 
-  const TriggerIcon = getTriggerIcon();
   const RunIcon = runButtonConfig.icon;
 
   const isActive = (optimisticStatus || workflow.status) === 'active';
@@ -231,7 +261,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => setEditDialogOpen(true)}
+              onClick={handleEditClick}
               title="Edit workflow"
             >
               <Pencil className="h-4 w-4" />
@@ -239,7 +269,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => onExport(workflow.id)}
+              onClick={handleExportClick}
               title="Export workflow"
             >
               <Download className="h-4 w-4" />
@@ -266,15 +296,17 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
         <div className="space-y-1 text-xs text-muted-foreground">
           <div className="flex justify-between">
             <span>Created:</span>
-            <span>{formatDate(workflow.createdAt)}</span>
+            <span>{formatDate(workflow.createdAt, 'Never')}</span>
           </div>
           <div className="flex justify-between">
             <span>Last run:</span>
-            <span>{formatDate(workflow.lastRun)}</span>
+            <span>{formatDate(workflow.lastRun, 'Never')}</span>
           </div>
           <div className="flex justify-between">
-            <span>Runs:</span>
-            <span className="font-medium">{workflow.runCount}</span>
+            <span>{workflow.trigger.type === 'chat' ? 'Chats:' : 'Runs:'}</span>
+            <span className="font-medium">
+              {workflow.trigger.type === 'chat' ? (workflow.conversationCount ?? 0) : workflow.runCount}
+            </span>
           </div>
         </div>
 
@@ -292,7 +324,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setSettingsDialogOpen(true)}
+            onClick={handleSettingsClick}
             className="h-7 px-2 transition-all duration-200 hover:scale-105 active:scale-95 group"
             title="Configure workflow settings"
           >
@@ -302,7 +334,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setCredentialsConfigOpen(true)}
+            onClick={handleCredentialsClick}
             className="h-7 px-2 transition-all duration-200 hover:scale-105 active:scale-95 group"
             title="Configure credentials"
           >
@@ -312,16 +344,9 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setOutputsDialogOpen(true)}
-            disabled={!workflow.lastRun || workflow.lastRunStatus !== 'success'}
-            className="h-7 px-2 transition-all duration-200 hover:scale-105 active:scale-95 group disabled:opacity-50"
-            title={
-              !workflow.lastRun
-                ? 'No outputs yet'
-                : workflow.lastRunStatus !== 'success'
-                  ? 'Last run failed'
-                  : 'View workflow outputs'
-            }
+            onClick={handleOutputsClick}
+            className="h-7 px-2 transition-all duration-200 hover:scale-105 active:scale-95 group"
+            title="View workflow execution history"
           >
             <BarChart3 className="h-3.5 w-3.5 mr-1 transition-transform duration-200 group-hover:scale-110" />
             <span className="text-xs">Outputs</span>
@@ -338,6 +363,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
         triggerConfig={workflow.trigger.config}
         open={executionDialogOpen}
         onOpenChange={setExecutionDialogOpen}
+        onExecuted={onUpdated}
       />
 
       <CredentialsConfigDialog
@@ -361,6 +387,7 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
         workflowId={workflow.id}
         workflowName={workflow.name}
         workflowConfig={workflow.config}
+        triggerType={workflow.trigger?.type}
         open={outputsDialogOpen}
         onOpenChange={setOutputsDialogOpen}
       />
@@ -412,4 +439,4 @@ export function WorkflowCard({ workflow, onDeleted, onExport, onUpdated }: Workf
       </Dialog>
     </Card>
   );
-}
+});

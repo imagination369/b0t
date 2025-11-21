@@ -40,3 +40,4 @@ export * from './error-recovery';
 export * from './state-management';
 export * from './webhooks-advanced';
 export * from './javascript';
+export * from './math';

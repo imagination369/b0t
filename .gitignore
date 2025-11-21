@@ -33,7 +33,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # logs (from pino-roll)
-logs/
+/logs/
 *.log
 
 # env files (can opt-in for committing if needed)
@@ -63,3 +63,8 @@ next-env.d.ts
 Thumbs.db
 *.AppleDouble
 *.LSOverride
+
+# Generated files
+openapi.json
+email.json
+/workflow/
