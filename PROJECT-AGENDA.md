@@ -63,10 +63,26 @@ A living document tracking the current state, immediate priorities, and future d
 - Database cleanup jobs and automatic token refresh
 - Ken's GHL module (v2 API with OAuth 2.0)
 
-### Priority 2: Verify GHL Module Features
-- Database schema migrations
+### Priority 2: Review Ken's GHL Module Implementation
 
-### Priority 2: Study Ken's Coding Patterns
+**Goal:** Understand Ken's v2 API implementation approach before making changes
+
+**Tasks:**
+1. **Read Ken's GHL module** (`src/modules/business/gohighlevel.ts`)
+   - Study function signatures and patterns
+   - Understand OAuth 2.0 credential flow
+   - Note API v2 endpoint structure
+   - Compare with original module approach
+
+2. **Test Ken's GHL functions** (if credentials available)
+   - Contact CRUD operations
+   - Conversation/messaging
+   - Appointments & calendars
+   - Pipelines & opportunities
+
+3. **Document findings** for decision-making on feature porting
+
+### Priority 3: Study Ken's Coding Patterns
 
 **Research Tasks:**
 1. **Analyze Ken's module architecture**
